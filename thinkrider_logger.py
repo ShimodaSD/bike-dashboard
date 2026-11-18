@@ -338,7 +338,8 @@ class Live:
         self.clients = set()           # asyncio.Queue per dashboard tab
         self.status = {"state": "starting", "connected": False, "device": None,
                        "hr": {"state": "off", "device": None},
-                       "ride": {"state": "ready", "n": 0, "fit": None}}
+                       "ride": {"state": "ready", "n": 0, "fit": None,
+                                "dir": os.path.basename(os.path.abspath(out_dir))}}
         self.trainer_address = None
         self.distance_m = 0.0
         self.energy_kj = 0.0
@@ -367,7 +368,7 @@ class Live:
         self.sess_f = open(os.path.join(self.out_dir, name), "w", newline="")
         self.sess_w = csv.DictWriter(self.sess_f, fieldnames=SESSION_FIELDS)
         self.sess_w.writeheader()
-        self.status["ride"] = {"state": "recording", "n": n, "fit": None}
+        self.status["ride"] = {**self.status["ride"], "state": "recording", "n": n, "fit": None}
         if self.strava:
             self.strava.upload = {"state": None}
             self.status["strava"] = self.strava.public()
