@@ -516,6 +516,11 @@ async def handle_http(reader, writer, live: Live):
             await writer.drain()
             return
         params = dict(urllib.parse.parse_qsl(query))
+        form = {}
+        if method == "POST":
+            n = int(headers.get("content-length") or 0)
+            if 0 < n <= 4096:            # small form posts only (Strava setup)
+                form = dict(urllib.parse.parse_qsl((await reader.readexactly(n)).decode("utf-8", "replace")))
         strava = live.strava
 
         if path == "/events":
@@ -543,9 +548,9 @@ async def handle_http(reader, writer, live: Live):
                 code, extra = "302 Found", f"Location: {strava.authorize_url(live.port)}\r\n"
                 body, ctype = b"", "text/plain"
             else:
-                body, ctype, code = (b"Strava is not set up yet. In a terminal run:\n\n"
-                                     b"  uv run thinkrider_logger.py --strava-setup\n\n"
-                                     b"then come back and click Connect to Strava again."), "text/plain", "200 OK"
+                body, ctype, code = (b"Strava is not set up yet. Open Settings on the dashboard,\n"
+                                     b"enter your Strava app's Client ID and Client Secret, then\n"
+                                     b"click Connect to Strava again."), "text/plain", "200 OK"
         elif path == "/strava/callback":
             msg = "connected"
             if params.get("state") != strava.state:
@@ -561,6 +566,13 @@ async def handle_http(reader, writer, live: Live):
             strava.push()
             code, body, ctype = "302 Found", b"", "text/plain"
             extra = f"Location: /?strava={urllib.parse.quote(msg)}\r\n"
+        elif path == "/strava/setup" and method == "POST":
+            err = save_strava_app(form.get("client_id", ""), form.get("client_secret", ""))
+            if not err:
+                print("Strava app keys saved from the dashboard")
+            strava.push()
+            body, ctype = (err or "ok").encode(), "text/plain"
+            code = "400 Bad Request" if err else "200 OK"
         elif path == "/strava/disconnect" and method == "POST":
             strava.disconnect(); strava.push()
             body, ctype, code = b"ok", "text/plain", "200 OK"
@@ -1126,6 +1138,16 @@ class Strava:
         self.push()
 
 
+def save_strava_app(cid, sec):
+    """Save the Strava API app keys (dashboard Settings or --strava-setup).
+    Returns an error message, or None when saved."""
+    cid, sec = cid.strip(), sec.strip()
+    if not cid.isdigit() or not (20 <= len(sec) <= 100) or not sec.isalnum():
+        return "That doesn't look right: the Client ID is a number, the Client Secret about 40 letters and digits."
+    _write_private(STRAVA_CONFIG, {"client_id": cid, "client_secret": sec})
+    return None
+
+
 def strava_setup():
     import getpass
     print("Strava setup\n"
@@ -1135,9 +1157,9 @@ def strava_setup():
           f"   {STRAVA_CONFIG} (never committed).\n")
     cid = input("Client ID: ").strip()
     sec = getpass.getpass("Client Secret (hidden): ").strip()
-    if not cid.isdigit() or len(sec) < 20:
-        sys.exit("That doesn't look right (the ID is a number, the secret ~40 characters).")
-    _write_private(STRAVA_CONFIG, {"client_id": cid, "client_secret": sec})
+    err = save_strava_app(cid, sec)
+    if err:
+        sys.exit(err)
     print("Saved. Start the logger and click 'Connect to Strava' on the dashboard.")
 
 

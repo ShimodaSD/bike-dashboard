@@ -636,13 +636,44 @@ function Laps({ hist, laps, ftp, recording }) {
 }
 
 // ------------------------------------------------------------------ Strava
+// One-time: the keys of the rider's own Strava API app, saved by the logger in strava_config.json.
+function StravaSetup({ onDone }) {
+  const [cid, setCid] = useState('');
+  const [sec, setSec] = useState('');
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const save = e => {
+    e.preventDefault(); setBusy(true); setErr(null);
+    fetch('/strava/setup', { method: 'POST', body: new URLSearchParams({ client_id: cid, client_secret: sec }) })
+      .then(r => r.text().then(t => r.ok ? (setSec(''), onDone && onDone()) : setErr(t)))
+      .catch(() => setErr('The logger is not reachable.'))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <form className="strava-setup" onSubmit={save}>
+      <p className="help">First time: create an app at <a href="https://www.strava.com/settings/api" target="_blank" rel="noreferrer">strava.com/settings/api</a> (any
+        name and website, <b>Authorization Callback Domain</b>: <code>localhost</code>), then copy its keys here.</p>
+      <label htmlFor="strava-id">Client ID</label>
+      <input id="strava-id" inputMode="numeric" autoComplete="off" value={cid} onChange={e => setCid(e.target.value)} required />
+      <label htmlFor="strava-secret">Client Secret</label>
+      <input id="strava-secret" type="password" autoComplete="off" value={sec} onChange={e => setSec(e.target.value)}
+             aria-invalid={!!err} aria-describedby="strava-err" required />
+      <div className="inline"><button className="primary" disabled={busy || !cid || !sec}>Save keys</button></div>
+      <p id="strava-err" className={'help' + (err ? ' err' : '')}>{err || 'Saved only on this computer, never uploaded.'}</p>
+    </form>
+  );
+}
+
 function StravaAccount({ strava }) {
   const [armed, setArmed] = useArmed(strava.connected);
+  const [editKeys, setEditKeys] = useState(false);
+  if (!strava.connected && (!strava.configured || editKeys))
+    return <StravaSetup onDone={() => setEditKeys(false)} />;
   if (!strava.connected)
     return <>
       <div className="inline"><a className="btn strava" href="/strava/connect">Connect to Strava</a></div>
-      <p className="help">{strava.configured ? 'Sign in on Strava once to allow uploads.'
-        : <>First time: run <code>uv run thinkrider_logger.py --strava-setup</code></>}</p>
+      <p className="help">Sign in on Strava once to allow uploads.{' '}
+        <button className="link" onClick={() => setEditKeys(true)}>Change app keys</button></p>
     </>;
   return <>
     <div className="inline">
