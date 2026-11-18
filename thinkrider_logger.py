@@ -15,14 +15,14 @@ What it does
      trainer drops. Passive: never writes to the trainer.
 
 Requirements
-  pip install bleak
+  uv (https://docs.astral.sh/uv/) - `uv run` installs bleak from pyproject.toml.
   dashboard.html must sit in the same folder as this script.
 
 Usage
-  python thinkrider_logger.py                 # find trainer, log + dashboard
-  python thinkrider_logger.py --demo          # fake ride, to try the dashboard
-  python thinkrider_logger.py --scan          # list nearby BLE devices
-  python thinkrider_logger.py --host 0.0.0.0  # open dashboard from a phone/tablet
+  uv run thinkrider_logger.py                 # find trainer, log + dashboard
+  uv run thinkrider_logger.py --demo          # fake ride, to try the dashboard
+  uv run thinkrider_logger.py --scan          # list nearby BLE devices
+  uv run thinkrider_logger.py --host 0.0.0.0  # open dashboard from a phone/tablet
                                               # on the same Wi-Fi: http://<PC-IP>:8000
   Other options: --name X2MAX  --address AA:BB:..  --port 8000  --out ride1
                  --duration 3600  --no-browser
@@ -706,7 +706,7 @@ def main():
                    help="output folder")
     args = p.parse_args()
     if BleakScanner is None and not args.demo:
-        sys.exit("bleak is not installed. Run:  pip install bleak   (or try --demo)")
+        sys.exit("bleak is not installed. Run with:  uv run thinkrider_logger.py   (or try --demo)")
     try:
         asyncio.run(scan(args.scan_time) if args.scan else main_async(args))
     except KeyboardInterrupt:

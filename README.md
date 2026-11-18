@@ -5,12 +5,14 @@ smart trainer) and watch a live training dashboard in your browser.
 
 ## Run it
 
+Needs [uv](https://docs.astral.sh/uv/). `uv run` creates the virtual environment and
+installs `bleak` from `pyproject.toml` / `uv.lock` on first use.
+
 ```bash
-pip install bleak
-python thinkrider_logger.py            # find the trainer, log + open the dashboard
-python thinkrider_logger.py --demo     # simulated ride, no trainer needed
-python thinkrider_logger.py --scan     # list nearby BLE devices
-python thinkrider_logger.py --host 0.0.0.0   # view from a phone/tablet on the same Wi-Fi
+uv run thinkrider_logger.py            # find the trainer, log + open the dashboard
+uv run thinkrider_logger.py --demo     # simulated ride, no trainer needed
+uv run thinkrider_logger.py --scan     # list nearby BLE devices
+uv run thinkrider_logger.py --host 0.0.0.0   # view from a phone/tablet on the same Wi-Fi
 ```
 
 Close Zwift / the ThinkRider app first: the trainer usually allows only one Bluetooth connection.
@@ -27,12 +29,12 @@ remembered in the browser.
 
 It is a React app in `dashboard/`, compiled into the single self-contained
 `dashboard.html` (works offline, no CDN). The built file is committed, so you only
-need Node.js if you change the dashboard:
+need Node.js and [pnpm](https://pnpm.io/) if you change the dashboard:
 
 ```bash
 cd dashboard
-npm install
-npm run build        # rewrites ../dashboard.html
+pnpm install
+pnpm build           # rewrites ../dashboard.html
 ```
 
 The script talks to the page over `GET /events` (Server-Sent Events: `init`,

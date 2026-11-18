@@ -1,5 +1,5 @@
 // Builds a single self-contained dashboard.html (React bundled inline, no internet needed).
-//   npm install && node build.mjs
+//   pnpm install && pnpm build
 import { build } from 'esbuild';
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -17,7 +17,7 @@ writeFileSync("../dashboard.html", `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>X2Max Live Training</title>
 <link rel="icon" href="data:,">
-<!-- Generated file. Edit dashboard/src/, then run: cd dashboard && npm run build -->
+<!-- Generated file. Edit dashboard/src/, then run: cd dashboard && pnpm build -->
 <style>
 ${css}</style>
 </head>
