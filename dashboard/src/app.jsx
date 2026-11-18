@@ -1,6 +1,7 @@
 // X2Max live dashboard (React). Talks to thinkrider_logger.py:
 //   GET  /events  Server-Sent Events: init, sample, preview, status, laps
 //   POST /lap     start a new lap
+//   POST /start, /finish   begin / end a recorded ride
 import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -12,7 +13,7 @@ const ZONES = [
   { n: 'Z4', name: 'Threshold',  lo: 0.90, hi: 1.05 },
   { n: 'Z5', name: 'VO2max',     lo: 1.05, hi: 1.20 },
   { n: 'Z6', name: 'Anaerobic',  lo: 1.20, hi: 1.50 },
-  { n: 'Z7', name: 'Neuromusc.', lo: 1.50, hi: Infinity },
+  { n: 'Z7', name: 'Neuromuscular', lo: 1.50, hi: Infinity },
 ];
 const CSV_COLS = ['t', 'timestamp_utc', 'lap', 'power_w', 'cadence_rpm', 'speed_kmh',
                   'heart_rate_bpm', 'distance_m', 'energy_kj'];
@@ -110,7 +111,7 @@ const postLap = () => post('/lap');
 
 // ------------------------------------------------------------------ header
 const STATUS = {
-  connected:    ['--good', s => `Connected · ${s.device || 'trainer'}`],
+  connected:    ['--good', s => `Trainer · ${s.device || 'connected'}`],
   demo:         ['--power', () => 'Demo ride (simulated data)'],
   searching:    ['--warning', () => 'Searching for trainer…'],
   reconnecting: ['--warning', () => 'Trainer lost · reconnecting (timer paused)'],
@@ -120,123 +121,179 @@ const STATUS = {
 // Separate heart-rate device (Garmin watch broadcasting HR, chest strap ...)
 const HR_STATUS = {
   connected:    ['--good', h => `HR · ${h.device || 'connected'}`],
-  searching:    ['--warning', () => 'HR · looking for watch/strap'],
+  searching:    ['--warning', () => 'HR · looking for watch or strap'],
   reconnecting: ['--warning', h => `HR · ${h.device || 'device'} lost, reconnecting`],
 };
 
-function Header({ status, seconds, ftp, setFtp, win, setWin, onCsv }) {
-  const ride = status.ride || {};
-  const recording = ride.state === 'recording';
-  const [armed, setArmed] = useState(false);       // Finish needs a second click
+// A button that needs a second click within 4 s (Finish, Start over an unsaved ride, Disconnect).
+function useArmed(resetKey) {
+  const [armed, setArmed] = useState(false);
   useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), 4000); return () => clearTimeout(t); }, [armed]);
-  useEffect(() => setArmed(false), [ride.state]);
+  useEffect(() => setArmed(false), [resetKey]);
+  return [armed, setArmed];
+}
+
+const Kbd = ({ k }) => <kbd aria-hidden="true">{k}</kbd>;
+
+function Header({ status, ride, act, settingsOpen, toggleSettings }) {
+  const recording = ride.state === 'recording';
   const [col, txt] = STATUS[status.state] || ['--text-muted', () => status.state || 'Connecting…'];
   const hr = status.hr || {};
   const hrPill = HR_STATUS[hr.state];
-  const [ftpDraft, setFtpDraft] = useState(String(ftp));
-  useEffect(() => setFtpDraft(String(ftp)), [ftp]);
-  const commitFtp = () => { const v = +ftpDraft; if (v >= 50 && v <= 600) setFtp(v); else setFtpDraft(String(ftp)); };
   return (
     <header>
-      <h1>X2Max · Live training</h1>
-      <span className="pill"><span className="dot" style={{ background: `var(${col})` }} />{txt(status)}</span>
-      {hrPill && <span className="pill" title="Heart rate from a separate Bluetooth device. Garmin watch: turn on Broadcast Heart Rate.">
-        <span className="dot" style={{ background: `var(${hrPill[0]})` }} />{hrPill[1](hr)}</span>}
+      <h1>X2Max <span>Live training</span></h1>
+      <div className="pills">
+        <span className="pill"><span className="dot" style={{ background: `var(${col})` }} />{txt(status)}</span>
+        {hrPill && <span className="pill"><span className="dot" style={{ background: `var(${hrPill[0]})` }} />{hrPill[1](hr)}</span>}
+      </div>
       <div className="controls">
         {recording ? <>
-          <button className="primary" onClick={postLap} title="Shortcut: L">Lap</button>
-          <button className={armed ? 'danger' : ''} onClick={() => armed ? post('/finish') : setArmed(true)}
-                  title="Ends the ride and saves the .FIT file">{armed ? 'Click again to finish' : 'Finish'}</button>
-        </> : <button className="start" onClick={() => post('/start')}>
-          {ride.state === 'finished' ? 'Start new ride' : 'Start'}</button>}
-        <label className="ftp">FTP
-          <input type="number" min="50" max="600" step="1" value={ftpDraft}
-                 onChange={e => setFtpDraft(e.target.value)} onBlur={commitFtp}
-                 onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} /> W
-        </label>
-        <select value={win} onChange={e => setWin(+e.target.value)} aria-label="Chart window">
-          <option value={300}>Last 5 min</option>
-          <option value={1200}>Last 20 min</option>
-          <option value={0}>Whole ride</option>
-        </select>
-        <button onClick={onCsv}>Export CSV</button>
-        <StravaControl strava={status.strava || {}} />
+          <button className="primary" onClick={act.lap} aria-keyshortcuts="L">Lap <Kbd k="L" /></button>
+          <button className={act.finishArmed ? 'danger' : ''} onClick={act.finish} aria-keyshortcuts="F">
+            {act.finishArmed ? 'Click again to finish' : <>Finish <Kbd k="F" /></>}</button>
+        </> : <button className={act.startArmed ? 'danger' : 'start'} onClick={act.start} aria-keyshortcuts="S">
+          {act.startArmed ? 'Click again to start' : <>{ride.state === 'finished' ? 'Start new ride' : 'Start'} <Kbd k="S" /></>}
+        </button>}
+        <button className={'quiet' + (settingsOpen ? ' on' : '')} onClick={toggleSettings}
+                aria-expanded={settingsOpen} aria-controls="settings">Settings</button>
       </div>
-      <div className={'clock' + (recording ? ' rec' : '')} title={recording ? 'Recording' : 'Not recording'}>
-        {fmtClock(seconds)}</div>
     </header>
   );
 }
 
+// ------------------------------------------------------------------ settings (disclosure, not a modal)
+function Settings({ ftp, setFtp, kg, setKg, strava, onCsv, canCsv }) {
+  const [ftpDraft, setFtpDraft] = useState(String(ftp));
+  const [ftpErr, setFtpErr] = useState(false);
+  useEffect(() => setFtpDraft(String(ftp)), [ftp]);
+  const commitFtp = () => {
+    const v = Math.round(+ftpDraft);
+    if (v >= 50 && v <= 600) { setFtp(v); setFtpErr(false); } else { setFtpErr(true); setFtpDraft(String(ftp)); }
+  };
+  return (
+    <section className="settings" id="settings" aria-label="Settings">
+      <div className="field">
+        <label htmlFor="ftp">FTP</label>
+        <div className="inline">
+          <input id="ftp" type="number" inputMode="numeric" min="50" max="600" step="1" value={ftpDraft}
+                 aria-invalid={ftpErr} aria-describedby="ftp-help"
+                 onChange={e => { setFtpDraft(e.target.value); setFtpErr(false); }} onBlur={commitFtp}
+                 onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} /> W
+        </div>
+        <p id="ftp-help" className={'help' + (ftpErr ? ' err' : '')}>
+          {ftpErr ? 'FTP must be between 50 and 600 W. Kept ' + ftp + ' W.' : 'Sets the power zones and the FTP line.'}</p>
+      </div>
+      <div className="field">
+        <label htmlFor="kg">Weight</label>
+        <div className="inline">
+          <input id="kg" type="number" inputMode="decimal" min="30" max="200" step="0.1" value={kg ?? ''}
+                 onChange={e => { const v = +e.target.value; setKg(v >= 30 && v <= 200 ? v : null); }} /> kg
+        </div>
+        <p className="help">Used for W/kg. Stays in this browser.</p>
+      </div>
+      <div className="field">
+        <span className="flabel">Strava</span>
+        <StravaAccount strava={strava} />
+      </div>
+      <div className="field">
+        <span className="flabel">This ride</span>
+        <div className="inline"><button onClick={onCsv} disabled={!canCsv}>Export CSV</button></div>
+        <p className="help">The logger also writes a CSV and a .FIT file to its ride folder.</p>
+      </div>
+      <div className="field wide">
+        <span className="flabel">Tips</span>
+        <p className="help">Garmin watch heart rate: turn on <b>Broadcast Heart Rate</b> on the watch.
+          Close Zwift and the ThinkRider app first: the trainer and the watch accept one connection at a time.
+          <span className="keys"> Keys: <Kbd k="S" /> start, <Kbd k="L" /> lap, <Kbd k="F" /> twice to finish.</span></p>
+      </div>
+    </section>
+  );
+}
+
 // ------------------------------------------------------------------ tiles
-function Tile({ label, keyColor, value, unit, sub, className = '', children }) {
+function Tile({ label, keyColor, value, unit, sub, className = '', badge, children }) {
   return (
     <div className={'tile ' + className}>
-      <div className="label">{keyColor && <span className="key" style={{ background: `var(${keyColor})` }} />}{label}</div>
+      <div className="label">{keyColor && <span className="key" style={{ background: `var(${keyColor})` }} />}{label}{badge}</div>
       <div className="value">{value}{unit && <span className="unit">{unit}</span>}</div>
-      {sub !== undefined && <div className="sub">{sub || ' '}</div>}
+      {sub !== undefined && <div className="sub">{sub || ' '}</div>}
       {children}
     </div>
   );
 }
 
-function Hero({ hist: rideHist, st, ftp, preview }) {
-  const hist = preview ? [preview] : rideHist;   // before Start: show live numbers only
-  const last = hist[hist.length - 1];
-  const w3 = hist.slice(-3);
-  const p3 = w3.length ? w3.reduce((t, s) => t + (s.power_w || 0), 0) / w3.length : null;
-  const zi = p3 > 0 ? zoneOf(p3, ftp) : -1;
+const avg3 = h => { const w = h.slice(-3); return w.length ? w.reduce((t, s) => t + (s.power_w || 0), 0) / w.length : null; };
+
+// Recording: live ride.  Ready: live preview (nothing saved).  Finished: the ride's summary.
+function Hero({ hist, st, ftp, preview, mode }) {
+  const done = mode === 'finished' && hist.length > 0;
+  const live = mode === 'recording' ? hist : preview ? [preview] : [];
+  const last = live[live.length - 1];
+  const p = done ? st.avgP : avg3(live);
+  const zi = p > 0 ? zoneOf(p, ftp) : -1;
   const z = ZONES[zi];
+  const zoneTxt = p > 0 ? <><b>{z.n} {z.name}</b> · {Math.round((p / ftp) * 100)}% FTP</> : null;
+  const timeBadge = mode === 'recording' ? <span className="badge rec">REC</span>
+                  : mode === 'finished' ? <span className="badge done">Saved</span>
+                  : null;   // the strip above already says Preview
   return (
-    <section className="hero">
-      <Tile className="power" label="Power · 3 s" keyColor="--power" value={r0(p3)} unit="W"
-            sub={!last ? '' : p3 > 0 ? `${z.n} · ${z.name} · ${Math.round((p3 / ftp) * 100)}% FTP` : 'Not pedaling'}>
-        <div className="zonebar">
-          {ZONES.map((zz, i) => <span key={zz.n} className={i === zi ? 'on' : ''}
-                                      style={{ background: `var(--z${i + 1})` }} title={`${zz.n} ${zz.name}`} />)}
+    <section className={'hero ' + mode}>
+      <Tile className="power" label={done ? 'Avg power · ride' : 'Power · 3 s'} keyColor="--power" value={r0(p)} unit="W"
+            sub={done ? <>{zoneTxt}{last ? <span className="live-now"> · now {r0(avg3(live))} W</span> : null}</>
+                      : !last ? '' : p > 0 ? zoneTxt : 'Not pedaling'}>
+        <div className="zonebar" aria-hidden="true">
+          {ZONES.map((zz, i) => <span key={zz.n} className={i === zi ? 'on' : ''} style={{ background: `var(--z${i + 1})` }} />)}
         </div>
       </Tile>
-      <Tile label="Cadence" keyColor="--cadence" value={last ? r0(last.cadence_rpm) : '–'} unit="rpm"
-            sub={st.avgCad ? `avg ${Math.round(st.avgCad)}` : ''} />
-      <Tile label="Speed" value={last && nz(last.speed_kmh) ? last.speed_kmh.toFixed(1) : '–'} unit="km/h"
-            sub={st.avgSpd ? `avg ${st.avgSpd.toFixed(1)}` : last && !nz(last.speed_kmh) ? 'Trainer sends no speed' : ''} />
-      <Tile label="Heart rate" keyColor="--hr" value={last ? r0(last.heart_rate_bpm) : '–'} unit="bpm"
-            sub={!last ? '' : st.avgHr ? `avg ${Math.round(st.avgHr)} · max ${st.maxHr}` : nz(last.heart_rate_bpm) ? '' : 'No HR data'} />
+      <Tile className={'time ' + mode} label="Ride time" badge={timeBadge}
+            value={mode === 'ready' ? '0:00' : fmtT(hist.length)}
+            sub={mode === 'recording' ? `moving ${fmtT(st.moving)}` : mode === 'finished' ? `moving ${fmtT(st.moving)}` : 'Press Start to record'} />
+      <Tile label={done ? 'Avg cadence' : 'Cadence'} keyColor="--cadence" unit="rpm"
+            value={done ? r0(st.avgCad) : last ? r0(last.cadence_rpm) : '–'}
+            sub={!done && mode === 'recording' && st.avgCad ? `avg ${Math.round(st.avgCad)}` : ''} />
+      <Tile label={done ? 'Avg speed' : 'Speed'} unit="km/h"
+            value={done ? (st.avgSpd ? st.avgSpd.toFixed(1) : '–') : last && nz(last.speed_kmh) ? last.speed_kmh.toFixed(1) : '–'}
+            sub={mode === 'recording' && st.avgSpd ? `avg ${st.avgSpd.toFixed(1)}`
+                 : last && !nz(last.speed_kmh) && !done ? 'Trainer sends no speed' : ''} />
+      <Tile label={done ? 'Avg heart rate' : 'Heart rate'} keyColor="--hr" unit="bpm"
+            value={done ? r0(st.avgHr) : last ? r0(last.heart_rate_bpm) : '–'}
+            sub={done ? (st.maxHr ? `max ${st.maxHr}` : 'No HR data')
+                 : !last ? '' : mode === 'recording' && st.avgHr ? `avg ${Math.round(st.avgHr)} · max ${st.maxHr}`
+                 : nz(last.heart_rate_bpm) ? '' : 'No HR data'} />
     </section>
   );
 }
 
-function Stats({ hist, st, ftp, kg, setKg }) {
-  const w3 = hist.slice(-3);
-  const p3 = w3.length ? w3.reduce((t, s) => t + (s.power_w || 0), 0) / w3.length : 0;
-  let ifTss = '–';
-  if (st.np) {
-    const IF = st.np / ftp, tss = ((hist.length * st.np * IF) / (ftp * 3600)) * 100;
-    ifTss = `${IF.toFixed(2)} · ${Math.round(tss)}`;
-  }
+function Stats({ hist, st, ftp, kg, more, setMore, mode }) {
+  const done = mode === 'finished';
+  const p3 = mode === 'recording' ? avg3(hist) || 0 : st.avgP || 0;
+  let IF = null, tss = null;
+  if (st.np) { IF = st.np / ftp; tss = ((hist.length * st.np * IF) / (ftp * 3600)) * 100; }
   return (
-    <section className="stats">
-      <Tile label="Moving time" value={fmtT(st.moving)} />
+    <section className={'stats' + (more ? ' more' : '')}>
+      <Tile label="Normalized power" value={r0(st.np)} unit="W" sub={st.np ? '' : 'after 30 s'} />
+      {done ? <Tile label="Max power" value={r0(st.maxP)} unit="W" /> : <Tile label="Avg power" value={r0(st.avgP)} unit="W" />}
       <Tile label="Distance" value={(st.dist / 1000).toFixed(2)} unit="km" />
-      <Tile label="Avg power" value={r0(st.avgP)} unit="W" />
-      <Tile label="Normalized power" value={r0(st.np)} unit="W" />
-      <Tile label="Max power" value={r0(st.maxP)} unit="W" />
       {/* ~1 kJ of work ≈ 1 kcal burned (≈24 % gross efficiency) */}
       <Tile label="Energy" value={Math.round(st.kj)} unit="kJ" sub={`≈ ${Math.round(st.kj)} kcal`} />
-      <Tile label="IF · TSS" value={ifTss} />
-      <Tile label="W/kg" value={kg ? (p3 / kg).toFixed(2) : '–'}
-            sub={<><input type="number" min="30" max="200" step="0.1" placeholder="kg" value={kg ?? ''}
-                          style={{ width: 70, padding: '2px 6px' }}
-                          onChange={e => { const v = +e.target.value; setKg(v > 0 ? v : null); }} /> kg</>} />
+      {more && <>
+        {done ? <Tile label="Avg power" value={r0(st.avgP)} unit="W" /> : <Tile label="Max power" value={r0(st.maxP)} unit="W" />}
+        <Tile label="Intensity factor" value={IF ? IF.toFixed(2) : '–'} sub="NP ÷ FTP" />
+        <Tile label="TSS" value={tss === null ? '–' : tss < 10 ? tss.toFixed(1) : Math.round(tss)} sub="training stress" />
+        <Tile label="W/kg" value={kg ? (p3 / kg).toFixed(2) : '–'} sub={kg ? `at ${kg} kg` : 'Set weight in Settings'} />
+      </>}
+      <button className="quiet more-btn" onClick={() => setMore(!more)} aria-expanded={more}>
+        {more ? 'Fewer stats' : 'More stats'}</button>
     </section>
   );
 }
 
 // ------------------------------------------------------------------ charts
 const CHARTS = [
-  { key: 'power_w', color: '--power', fill: true, min: 0, floorMax: 300, ftpRef: true, title: 'Power (W) · dashed line = FTP', h: 200 },
-  { key: 'cadence_rpm', color: '--cadence', min: 0, floorMax: 120, title: 'Cadence (rpm)', h: 120 },
-  { key: 'heart_rate_bpm', color: '--hr', autoMin: true, floorMax: 160, title: 'Heart rate (bpm)', h: 140, xaxis: true },
+  { key: 'power_w', color: '--power', fill: true, min: 0, floorMax: 300, ftpRef: true, title: 'Power (W) · dashed line = FTP', name: 'Power', unit: 'W', h: 170 },
+  { key: 'cadence_rpm', color: '--cadence', min: 0, floorMax: 120, title: 'Cadence (rpm)', name: 'Cadence', unit: 'rpm', h: 100 },
+  { key: 'heart_rate_bpm', color: '--hr', autoMin: true, floorMax: 160, title: 'Heart rate (bpm)', name: 'Heart rate', unit: 'bpm', h: 124, xaxis: true },
 ];
 
 function niceStep(range, n) {
@@ -244,8 +301,9 @@ function niceStep(range, n) {
   return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
 }
 
+// Whole ride until it is longer than the window, then the last `win` seconds.
 function xRange(n, win) {
-  if (win) { const end = Math.max(n - 1, win - 1); return [end - win + 1, end]; }
+  if (win && n > win) return [n - win, n - 1];
   return [0, Math.max(n - 1, 59)];
 }
 
@@ -285,7 +343,7 @@ function Chart({ c, hist, laps, ftp, win, version, hover, setHover }) {
     const Y = v => pad.t + (1 - (v - ymin) / (ymax - ymin)) * (H - pad.t - pad.b);
 
     // grid + y labels
-    g.font = '11px system-ui, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'right';
+    g.font = '12px system-ui, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'right';
     for (let v = ymin; v <= ymax + 1e-9; v += step) {
       const y = Math.round(Y(v)) + 0.5;
       g.strokeStyle = tok.grid; g.lineWidth = 1; g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke();
@@ -350,9 +408,17 @@ function Chart({ c, hist, laps, ftp, win, version, hover, setHover }) {
   return (
     <div className="chart">
       <div className="title"><span className="key" style={{ background: `var(${c.color})` }} />{c.title}</div>
-      <canvas ref={cv} style={{ height: H }} onMouseMove={onMove} onMouseLeave={() => setHover(null, null)} />
+      <canvas ref={cv} style={{ height: H }} onMouseMove={onMove} onMouseLeave={() => setHover(null, null)}
+              role="img" aria-label={chartSummary(c, hist)} />
     </div>
   );
+}
+
+function chartSummary(c, hist) {
+  const v = hist.map(s => s[c.key]).filter(nz);
+  if (!v.length) return `${c.name}: no data yet`;
+  const avg = Math.round(v.reduce((a, b) => a + b, 0) / v.length);
+  return `${c.name} over ${fmtT(hist.length)}: now ${v[v.length - 1]} ${c.unit}, average ${avg}, max ${Math.max(...v)}`;
 }
 
 function Tooltip({ s, pos, ftp, boxRef }) {
@@ -379,15 +445,22 @@ function Tooltip({ s, pos, ftp, boxRef }) {
   );
 }
 
-function Charts(props) {
+function Charts({ win, setWin, ...props }) {
   const [hover, setHoverT] = useState(null);
   const [pos, setPos] = useState(null);
   const box = useRef(null);
   const setHover = useCallback((t, p) => { setHoverT(t); setPos(p); }, []);
   return (
     <div className="charts" ref={box}>
-      <div className="head"><h2>Ride timeline</h2></div>
-      {CHARTS.map(c => <Chart key={c.key} c={c} {...props} hover={hover} setHover={setHover} />)}
+      <div className="head">
+        <h2>Ride timeline</h2>
+        <select value={win} onChange={e => setWin(+e.target.value)} aria-label="Chart time window">
+          <option value={300}>Last 5 min</option>
+          <option value={1200}>Last 20 min</option>
+          <option value={0}>Whole ride</option>
+        </select>
+      </div>
+      {CHARTS.map(c => <Chart key={c.key} c={c} {...props} win={win} hover={hover} setHover={setHover} />)}
       <Tooltip s={hover !== null ? props.hist[hover] : null} pos={pos} ftp={props.ftp} boxRef={box} />
     </div>
   );
@@ -403,10 +476,10 @@ function TimeInZone({ st, ftp }) {
         {ZONES.map((z, i) => {
           const lo = Math.round(z.lo * ftp), hi = z.hi === Infinity ? null : Math.round(z.hi * ftp) - 1;
           return (
-            <div className="r" key={z.n} title={`${lo}${hi !== null ? '–' + hi : '+'} W`}>
-              <span className="name">{z.n} {z.name}</span>
+            <div className="r" key={z.n}>
+              <span className="name">{z.n} {z.name}<small>{lo}{hi !== null ? '–' + hi : '+'} W</small></span>
               <span className="bar"><i style={{ width: `${(st.tiz[i] / mx) * 100}%`, background: `var(--z${i + 1})` }} /></span>
-              <span className="v">{fmtT(st.tiz[i])} <span style={{ color: 'var(--text-muted)' }}>{Math.round((st.tiz[i] / tot) * 100)}%</span></span>
+              <span className="v">{fmtT(st.tiz[i])} <span className="pct">{Math.round((st.tiz[i] / tot) * 100)}%</span></span>
             </div>
           );
         })}
@@ -415,10 +488,10 @@ function TimeInZone({ st, ftp }) {
   );
 }
 
-function Laps({ hist, laps, ftp }) {
+function Laps({ hist, laps, ftp, recording }) {
   const rows = laps.map((start, i) => {
     const end = i + 1 < laps.length ? laps[i + 1] : hist.length;
-    return { i, cur: i === laps.length - 1, ls: stats(hist.slice(start, end), ftp, start > 0 ? hist[start - 1] : null) };
+    return { i, cur: recording && i === laps.length - 1, ls: stats(hist.slice(start, end), ftp, start > 0 ? hist[start - 1] : null) };
   }).reverse();
   return (
     <div className="panel">
@@ -427,10 +500,10 @@ function Laps({ hist, laps, ftp }) {
         <table>
           <thead><tr><th>#</th><th>Time</th><th>Avg W</th><th>NP</th><th>rpm</th><th>bpm</th><th>km</th></tr></thead>
           <tbody>
-            {!hist.length ? <tr><td colSpan="7" className="empty">No data yet</td></tr> :
+            {!hist.length ? <tr><td colSpan="7" className="empty">Laps appear here once you press Start.</td></tr> :
               rows.map(({ i, cur, ls }) => (
                 <tr key={i} className={cur ? 'current' : ''}>
-                  <td>{i + 1}{cur ? ' ▸' : ''}</td><td>{fmtT(ls.n)}</td><td>{r0(ls.avgP)}</td><td>{r0(ls.np)}</td>
+                  <td>{i + 1}{cur && <span className="now">now</span>}</td><td>{fmtT(ls.n)}</td><td>{r0(ls.avgP)}</td><td>{r0(ls.np)}</td>
                   <td>{r0(ls.avgCad)}</td><td>{r0(ls.avgHr)}</td><td>{(ls.dist / 1000).toFixed(2)}</td>
                 </tr>
               ))}
@@ -442,24 +515,29 @@ function Laps({ hist, laps, ftp }) {
 }
 
 // ------------------------------------------------------------------ Strava
-function StravaControl({ strava }) {
+function StravaAccount({ strava }) {
+  const [armed, setArmed] = useArmed(strava.connected);
   if (!strava.connected)
-    return <a className="btn strava" href="/strava/connect"
-              title={strava.configured ? 'Sign in on Strava to allow uploads'
-                                       : 'First run: uv run thinkrider_logger.py --strava-setup'}>Connect to Strava</a>;
-  return (
-    <span className="pill" title="Rides can be uploaded to this Strava account">
-      <span className="dot" style={{ background: 'var(--strava)' }} />Strava · {strava.athlete || 'connected'}
-      <button className="x" onClick={() => post('/strava/disconnect')} title="Disconnect Strava">×</button>
-    </span>
-  );
+    return <>
+      <div className="inline"><a className="btn strava" href="/strava/connect">Connect to Strava</a></div>
+      <p className="help">{strava.configured ? 'Sign in on Strava once to allow uploads.'
+        : <>First time: run <code>uv run thinkrider_logger.py --strava-setup</code></>}</p>
+    </>;
+  return <>
+    <div className="inline">
+      <span className="acct"><span className="dot" style={{ background: 'var(--strava)' }} />{strava.athlete || 'Connected'}</span>
+      <button className={armed ? 'danger' : ''} onClick={() => armed ? post('/strava/disconnect') : setArmed(true)}>
+        {armed ? 'Click again to disconnect' : 'Disconnect'}</button>
+    </div>
+    <p className="help">Finished rides upload to this account with one click.</p>
+  </>;
 }
 
 function StravaUpload({ strava }) {
   const up = strava.upload || {};
   const manual = <a className="btn" href="https://www.strava.com/upload/select" target="_blank" rel="noreferrer">
     Upload manually</a>;
-  if (!strava.connected) return <><a className="btn strava" href="/strava/connect">Connect to Strava</a>{manual}</>;
+  if (!strava.connected) return <a className="btn strava" href="/strava/connect">Connect to Strava</a>;
   if (up.state === 'uploading') return <span className="note">Uploading to Strava…</span>;
   if (up.state === 'done')
     return <a className="btn strava" href={up.url} target="_blank" rel="noreferrer">View on Strava</a>;
@@ -476,26 +554,39 @@ function StravaNotice() {
   useEffect(() => { if (msg) history.replaceState(null, '', '/'); }, []); // eslint-disable-line
   if (!msg) return null;
   const ok = msg === 'connected';
-  return <div className={'banner ' + (ok ? 'done' : 'err')}>
+  return <div className={'banner ' + (ok ? 'done' : 'err')} role="status">
     {ok ? 'Connected to Strava. Finished rides can now be uploaded with one click.'
         : `Strava connection failed (${msg.replace(/^error: /, '')}).`}
     <button onClick={() => setMsg(null)}>OK</button></div>;
 }
 
-// ------------------------------------------------------------------ ride banner
-function RideBanner({ ride, seconds, strava }) {
-  if (ride.state === 'ready')
-    return <div className="banner">Press <b>Start</b> to begin recording. Nothing is saved until then.</div>;
-  if (ride.state !== 'finished') return null;
-  if (!ride.fit) return <div className="banner">Ride finished. Nothing was recorded.</div>;
-  return (
-    <div className="banner done">
-      <span>Ride saved ({fmtClock(seconds)}): <code>{ride.fit}</code></span>
-      <a className="btn primary" href="/ride.fit" download={ride.fit}>Download .FIT</a>
-      <StravaUpload strava={strava} />
-      <a className="btn" href="https://connect.garmin.com/modern/import-data" target="_blank" rel="noreferrer">Garmin Connect import</a>
-    </div>
-  );
+// ------------------------------------------------------------------ ride strip: one band, same height in every state
+function RideStrip({ ride, seconds, strava, startArmed, lapFlash, onDownload }) {
+  const dir = ride.dir ? `${ride.dir}/` : 'the ride folder';
+  let cls = 'ready', body;
+  if (ride.state === 'recording') {
+    cls = 'rec';
+    body = <><span className="badge rec">REC</span>
+      <span>Recording ride {ride.n || 1} · saved every second to <b>{dir}</b></span>
+      {lapFlash ? <span className="flash">Lap {lapFlash} started</span> : null}</>;
+  } else if (ride.state === 'finished' && ride.fit) {
+    cls = 'done';
+    body = <>
+      <span className="badge done">Saved</span>
+      <span className="what">Ride saved · {fmtT(seconds)}<small>{ride.fit} in {dir}</small></span>
+      <span className="actions">
+        <a className="btn primary" href="/ride.fit" download={ride.fit} onClick={onDownload}>Download .FIT</a>
+        <StravaUpload strava={strava} />
+        <a className="btn" href="https://connect.garmin.com/modern/import-data" target="_blank" rel="noreferrer">Garmin Connect import</a>
+      </span>
+      {startArmed && <span className="warn">This ride isn’t downloaded or uploaded yet. Starting again clears these buttons; the file stays in {dir}</span>}</>;
+  } else if (ride.state === 'finished') {
+    body = <span>Ride finished. Nothing was recorded.</span>;
+  } else {
+    body = <><span className="badge">Preview</span>
+      <span>Live numbers only. Nothing is saved until you press <b>Start</b>.</span></>;
+  }
+  return <div className={'strip ' + cls} role="status" aria-live="polite">{body}</div>;
 }
 
 // ------------------------------------------------------------------ app
@@ -510,35 +601,72 @@ function exportCsv(hist) {
 function App() {
   const { hist, laps, status, online, version, preview } = useLiveFeed();
   const ride = status.ride || {};
+  const strava = status.strava || {};
+  const mode = ride.state === 'recording' ? 'recording' : ride.state === 'finished' ? 'finished' : 'ready';
   const [ftp, setFtp] = useStored('ftp', 200);
   const [kg, setKg] = useStored('kg', null);
   const [win, setWin] = useStored('win', 1200);
+  const [more, setMore] = useStored('moreStats', false);
+  const [downloaded, setDownloaded] = useStored('downloaded', null);   // .fit name last downloaded
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [finishArmed, setFinishArmed] = useArmed(ride.state);
+  const [startArmed, setStartArmed] = useArmed(ride.state);
+  const [lapFlash, setLapFlash] = useState(0);
 
   const st = useMemo(() => stats(hist, ftp, null), [version, ftp]); // eslint-disable-line
 
+  // the finished ride is "unsaved" until it was downloaded or uploaded from here
+  const unsaved = mode === 'finished' && ride.fit && downloaded !== ride.fit && (strava.upload || {}).state !== 'done';
+
+  useEffect(() => { if (mode === 'recording') setSettingsOpen(false); }, [mode]);
+  useEffect(() => {
+    if (mode !== 'recording' || laps.length < 2) return;
+    setLapFlash(laps.length);
+    const t = setTimeout(() => setLapFlash(0), 3000);
+    return () => clearTimeout(t);
+  }, [laps.length]); // eslint-disable-line
+
+  const act = {
+    finishArmed, startArmed,
+    lap: postLap,
+    finish: () => finishArmed ? post('/finish') : setFinishArmed(true),
+    start: () => unsaved && !startArmed ? setStartArmed(true) : post('/start'),
+  };
+  const actRef = useRef(act); actRef.current = act;
+  const modeRef = useRef(mode); modeRef.current = mode;
+
   useEffect(() => {
     const k = e => {
-      if ((e.key === 'l' || e.key === 'L') && !['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) postLap();
+      if (e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+      const key = e.key.toLowerCase(), a = actRef.current, m = modeRef.current;
+      if (key === 'l' && m === 'recording') a.lap();
+      else if (key === 'f' && m === 'recording') a.finish();
+      else if (key === 's' && m !== 'recording') a.start();
     };
     document.addEventListener('keydown', k);
     return () => document.removeEventListener('keydown', k);
   }, []);
 
+  useEffect(() => { document.documentElement.dataset.ride = mode; }, [mode]);
+
   return (
     <div className="wrap">
-      <Header status={status} seconds={hist.length} ftp={ftp} setFtp={setFtp} win={win} setWin={setWin}
-              onCsv={() => exportCsv(hist)} />
-      {!online && <div className="offline">The dashboard lost contact with the script.
+      <Header status={status} ride={ride} act={act} settingsOpen={settingsOpen}
+              toggleSettings={() => setSettingsOpen(o => !o)} />
+      {settingsOpen && <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} strava={strava}
+                                 onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} />}
+      {!online && <div className="offline" role="alert">The dashboard lost contact with the script.
         Is <code>thinkrider_logger.py</code> still running? Retrying…</div>}
       <StravaNotice />
-      <RideBanner ride={ride} seconds={hist.length} strava={status.strava || {}} />
-      <Hero hist={hist} st={st} ftp={ftp} preview={ride.state === 'recording' ? null : preview} />
-      <Stats hist={hist} st={st} ftp={ftp} kg={kg} setKg={setKg} />
+      <RideStrip ride={ride} seconds={hist.length} strava={strava} startArmed={startArmed} lapFlash={lapFlash}
+                 onDownload={() => setDownloaded(ride.fit)} />
+      <Hero hist={hist} st={st} ftp={ftp} preview={mode === 'recording' ? null : preview} mode={mode} />
+      <Stats hist={hist} st={st} ftp={ftp} kg={kg} more={more} setMore={setMore} mode={mode} />
       <section className="main">
-        <Charts hist={hist} laps={laps} ftp={ftp} win={win} version={version} />
+        <Charts hist={hist} laps={laps} ftp={ftp} win={win} setWin={setWin} version={version} />
         <div className="side">
           <TimeInZone st={st} ftp={ftp} />
-          <Laps hist={hist} laps={laps} ftp={ftp} />
+          <Laps hist={hist} laps={laps} ftp={ftp} recording={mode === 'recording'} />
         </div>
       </section>
     </div>
