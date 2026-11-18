@@ -1,5 +1,5 @@
 // X2Max live dashboard (React). Talks to thinkrider_logger.py:
-//   GET  /events  Server-Sent Events: init, sample, status, laps
+//   GET  /events  Server-Sent Events: init, sample, preview, status, laps
 //   POST /lap     start a new lap
 import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -77,6 +77,7 @@ function useLiveFeed() {
   const [status, setStatus] = useState({});
   const [online, setOnline] = useState(true);
   const [version, setVersion] = useState(0);
+  const [preview, setPreview] = useState(null);   // live numbers while not recording
 
   useEffect(() => {
     let es, closed = false;
@@ -92,6 +93,7 @@ function useLiveFeed() {
         if (s.t === h.length) { h.push(s); setVersion(v => v + 1); }
         else if (s.t > h.length) { es.close(); if (!closed) open(); }  // missed samples: resync via init
       });
+      es.addEventListener('preview', e => setPreview(JSON.parse(e.data)));
       es.addEventListener('laps', e => { setLaps(JSON.parse(e.data)); setVersion(v => v + 1); });
       es.addEventListener('status', e => setStatus(JSON.parse(e.data)));
       es.onerror = () => setOnline(false);  // EventSource retries by itself; init clears this
@@ -100,10 +102,11 @@ function useLiveFeed() {
     return () => { closed = true; es.close(); };
   }, []);
 
-  return { hist: hist.current, laps, status, online, version };
+  return { hist: hist.current, laps, status, online, version, preview };
 }
 
-const postLap = () => fetch('/lap', { method: 'POST' }).catch(() => {});
+const post = path => fetch(path, { method: 'POST' }).catch(() => {});
+const postLap = () => post('/lap');
 
 // ------------------------------------------------------------------ header
 const STATUS = {
@@ -114,8 +117,22 @@ const STATUS = {
   starting:     ['--warning', () => 'Starting…'],
 };
 
+// Separate heart-rate device (Garmin watch broadcasting HR, chest strap ...)
+const HR_STATUS = {
+  connected:    ['--good', h => `HR · ${h.device || 'connected'}`],
+  searching:    ['--warning', () => 'HR · looking for watch/strap'],
+  reconnecting: ['--warning', h => `HR · ${h.device || 'device'} lost, reconnecting`],
+};
+
 function Header({ status, seconds, ftp, setFtp, win, setWin, onCsv }) {
+  const ride = status.ride || {};
+  const recording = ride.state === 'recording';
+  const [armed, setArmed] = useState(false);       // Finish needs a second click
+  useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), 4000); return () => clearTimeout(t); }, [armed]);
+  useEffect(() => setArmed(false), [ride.state]);
   const [col, txt] = STATUS[status.state] || ['--text-muted', () => status.state || 'Connecting…'];
+  const hr = status.hr || {};
+  const hrPill = HR_STATUS[hr.state];
   const [ftpDraft, setFtpDraft] = useState(String(ftp));
   useEffect(() => setFtpDraft(String(ftp)), [ftp]);
   const commitFtp = () => { const v = +ftpDraft; if (v >= 50 && v <= 600) setFtp(v); else setFtpDraft(String(ftp)); };
@@ -123,8 +140,15 @@ function Header({ status, seconds, ftp, setFtp, win, setWin, onCsv }) {
     <header>
       <h1>X2Max · Live training</h1>
       <span className="pill"><span className="dot" style={{ background: `var(${col})` }} />{txt(status)}</span>
+      {hrPill && <span className="pill" title="Heart rate from a separate Bluetooth device. Garmin watch: turn on Broadcast Heart Rate.">
+        <span className="dot" style={{ background: `var(${hrPill[0]})` }} />{hrPill[1](hr)}</span>}
       <div className="controls">
-        <button className="primary" onClick={postLap} title="Shortcut: L">Lap</button>
+        {recording ? <>
+          <button className="primary" onClick={postLap} title="Shortcut: L">Lap</button>
+          <button className={armed ? 'danger' : ''} onClick={() => armed ? post('/finish') : setArmed(true)}
+                  title="Ends the ride and saves the .FIT file">{armed ? 'Click again to finish' : 'Finish'}</button>
+        </> : <button className="start" onClick={() => post('/start')}>
+          {ride.state === 'finished' ? 'Start new ride' : 'Start'}</button>}
         <label className="ftp">FTP
           <input type="number" min="50" max="600" step="1" value={ftpDraft}
                  onChange={e => setFtpDraft(e.target.value)} onBlur={commitFtp}
@@ -136,8 +160,10 @@ function Header({ status, seconds, ftp, setFtp, win, setWin, onCsv }) {
           <option value={0}>Whole ride</option>
         </select>
         <button onClick={onCsv}>Export CSV</button>
+        <StravaControl strava={status.strava || {}} />
       </div>
-      <div className="clock" title="Ride time">{fmtClock(seconds)}</div>
+      <div className={'clock' + (recording ? ' rec' : '')} title={recording ? 'Recording' : 'Not recording'}>
+        {fmtClock(seconds)}</div>
     </header>
   );
 }
@@ -154,7 +180,8 @@ function Tile({ label, keyColor, value, unit, sub, className = '', children }) {
   );
 }
 
-function Hero({ hist, st, ftp }) {
+function Hero({ hist: rideHist, st, ftp, preview }) {
+  const hist = preview ? [preview] : rideHist;   // before Start: show live numbers only
   const last = hist[hist.length - 1];
   const w3 = hist.slice(-3);
   const p3 = w3.length ? w3.reduce((t, s) => t + (s.power_w || 0), 0) / w3.length : null;
@@ -174,7 +201,7 @@ function Hero({ hist, st, ftp }) {
       <Tile label="Speed" value={last && nz(last.speed_kmh) ? last.speed_kmh.toFixed(1) : '–'} unit="km/h"
             sub={st.avgSpd ? `avg ${st.avgSpd.toFixed(1)}` : last && !nz(last.speed_kmh) ? 'Trainer sends no speed' : ''} />
       <Tile label="Heart rate" keyColor="--hr" value={last ? r0(last.heart_rate_bpm) : '–'} unit="bpm"
-            sub={!last ? '' : st.avgHr ? `avg ${Math.round(st.avgHr)} · max ${st.maxHr}` : 'No HR data'} />
+            sub={!last ? '' : st.avgHr ? `avg ${Math.round(st.avgHr)} · max ${st.maxHr}` : nz(last.heart_rate_bpm) ? '' : 'No HR data'} />
     </section>
   );
 }
@@ -414,6 +441,63 @@ function Laps({ hist, laps, ftp }) {
   );
 }
 
+// ------------------------------------------------------------------ Strava
+function StravaControl({ strava }) {
+  if (!strava.connected)
+    return <a className="btn strava" href="/strava/connect"
+              title={strava.configured ? 'Sign in on Strava to allow uploads'
+                                       : 'First run: uv run thinkrider_logger.py --strava-setup'}>Connect to Strava</a>;
+  return (
+    <span className="pill" title="Rides can be uploaded to this Strava account">
+      <span className="dot" style={{ background: 'var(--strava)' }} />Strava · {strava.athlete || 'connected'}
+      <button className="x" onClick={() => post('/strava/disconnect')} title="Disconnect Strava">×</button>
+    </span>
+  );
+}
+
+function StravaUpload({ strava }) {
+  const up = strava.upload || {};
+  const manual = <a className="btn" href="https://www.strava.com/upload/select" target="_blank" rel="noreferrer">
+    Upload manually</a>;
+  if (!strava.connected) return <><a className="btn strava" href="/strava/connect">Connect to Strava</a>{manual}</>;
+  if (up.state === 'uploading') return <span className="note">Uploading to Strava…</span>;
+  if (up.state === 'done')
+    return <a className="btn strava" href={up.url} target="_blank" rel="noreferrer">View on Strava</a>;
+  return <>
+    <button className="strava" onClick={() => post('/strava/upload')}>
+      {up.state === 'error' ? 'Retry Strava upload' : 'Upload to Strava'}</button>
+    {up.state === 'error' && <span className="note err">Strava: {up.error}</span>}
+    {up.state === 'error' && manual}
+  </>;
+}
+
+function StravaNotice() {
+  const [msg, setMsg] = useState(() => new URLSearchParams(location.search).get('strava'));
+  useEffect(() => { if (msg) history.replaceState(null, '', '/'); }, []); // eslint-disable-line
+  if (!msg) return null;
+  const ok = msg === 'connected';
+  return <div className={'banner ' + (ok ? 'done' : 'err')}>
+    {ok ? 'Connected to Strava. Finished rides can now be uploaded with one click.'
+        : `Strava connection failed (${msg.replace(/^error: /, '')}).`}
+    <button onClick={() => setMsg(null)}>OK</button></div>;
+}
+
+// ------------------------------------------------------------------ ride banner
+function RideBanner({ ride, seconds, strava }) {
+  if (ride.state === 'ready')
+    return <div className="banner">Press <b>Start</b> to begin recording. Nothing is saved until then.</div>;
+  if (ride.state !== 'finished') return null;
+  if (!ride.fit) return <div className="banner">Ride finished. Nothing was recorded.</div>;
+  return (
+    <div className="banner done">
+      <span>Ride saved ({fmtClock(seconds)}): <code>{ride.fit}</code></span>
+      <a className="btn primary" href="/ride.fit" download={ride.fit}>Download .FIT</a>
+      <StravaUpload strava={strava} />
+      <a className="btn" href="https://connect.garmin.com/modern/import-data" target="_blank" rel="noreferrer">Garmin Connect import</a>
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ app
 function exportCsv(hist) {
   const csv = [CSV_COLS.join(',')].concat(hist.map(s => CSV_COLS.map(c => s[c] ?? '').join(','))).join('\n');
@@ -424,7 +508,8 @@ function exportCsv(hist) {
 }
 
 function App() {
-  const { hist, laps, status, online, version } = useLiveFeed();
+  const { hist, laps, status, online, version, preview } = useLiveFeed();
+  const ride = status.ride || {};
   const [ftp, setFtp] = useStored('ftp', 200);
   const [kg, setKg] = useStored('kg', null);
   const [win, setWin] = useStored('win', 1200);
@@ -445,7 +530,9 @@ function App() {
               onCsv={() => exportCsv(hist)} />
       {!online && <div className="offline">The dashboard lost contact with the script.
         Is <code>thinkrider_logger.py</code> still running? Retrying…</div>}
-      <Hero hist={hist} st={st} ftp={ftp} />
+      <StravaNotice />
+      <RideBanner ride={ride} seconds={hist.length} strava={status.strava || {}} />
+      <Hero hist={hist} st={st} ftp={ftp} preview={ride.state === 'recording' ? null : preview} />
       <Stats hist={hist} st={st} ftp={ftp} kg={kg} setKg={setKg} />
       <section className="main">
         <Charts hist={hist} laps={laps} ftp={ftp} win={win} version={version} />

@@ -227,3 +227,7 @@ node_modules/
 
 # Ride recordings made by thinkrider_logger.py
 x2max_*/
+
+# Strava credentials and sign-in token (thinkrider_logger.py --strava-setup)
+strava_config.json
+strava_token.json
