@@ -70,9 +70,11 @@ back to `localhost`); uploads work from any device after that.
 ## Dashboard
 
 `dashboard.html` is served by the script at http://localhost:8000. It shows power
-(3 s), cadence, speed, heart rate, power zones, NP / IF / TSS, W/kg, laps (button or
-`L` key) and live power / cadence / HR charts. FTP, weight and chart window are
-remembered in the browser.
+(3 s), cadence, speed, heart rate, power zones, NP / IF / TSS, W/kg, laps and live
+power / cadence / HR charts. While recording it shows a red REC strip and frame;
+after Finish it shows the ride's summary. Keys: `S` start, `L` lap, `F` twice to
+finish. FTP, weight, Strava account and CSV export are under **Settings**; FTP,
+weight and chart window are remembered in the browser.
 
 It is a React app in `dashboard/`, compiled into the single self-contained
 `dashboard.html` (works offline, no CDN). The built file is committed, so you only
