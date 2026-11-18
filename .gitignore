@@ -244,3 +244,6 @@ __marimo__/
 **/.impeccable/live/deferred-svelte-component-accepts.json
 **/.impeccable/live/*.png
 # impeccable-ignore-end
+
+# Claude Code per-developer settings
+.claude/settings.local.json
