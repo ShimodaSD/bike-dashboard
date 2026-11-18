@@ -221,3 +221,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Node
+node_modules/
+
+# Ride recordings made by thinkrider_logger.py
+x2max_*/
