@@ -5,7 +5,7 @@ thinkrider_logger.py - capture ALL Bluetooth LE data from a ThinkRider X2Max
 
 What it does
   1. Connects to the trainer and heart-rate device picked on the dashboard
-     (Devices panel; remembered in devices.json). First start: finds them by name.
+     (Devices panel; remembered in config/devices.json). First start: finds them by name.
   2. Dumps the full GATT table + every readable value      -> gatt_dump.json
   3. Subscribes to EVERY notify/indicate characteristic (incl. proprietary).
   4. Logs every packet as raw hex                          -> raw_packets.csv
@@ -19,18 +19,18 @@ What it does
 
 Requirements
   uv (https://docs.astral.sh/uv/) - `uv run` installs bleak from pyproject.toml.
-  dashboard.html must sit in the same folder as this script.
+  The dashboard is dashboard/dashboard.html (built from dashboard/src).
 
 Usage
   macOS: double-click "Start X2Max.command" (no terminal typing needed)
-  uv run thinkrider_logger.py                 # find trainer, log + dashboard
-  uv run thinkrider_logger.py --demo          # fake ride, to try the dashboard
-  uv run thinkrider_logger.py --scan          # list nearby BLE devices
-  uv run thinkrider_logger.py --host 0.0.0.0  # open dashboard from a phone/tablet
+  uv run logger/thinkrider_logger.py                 # find trainer, log + dashboard
+  uv run logger/thinkrider_logger.py --demo          # fake ride, to try the dashboard
+  uv run logger/thinkrider_logger.py --scan          # list nearby BLE devices
+  uv run logger/thinkrider_logger.py --host 0.0.0.0  # open dashboard from a phone/tablet
                                               # on the same Wi-Fi: http://<PC-IP>:8000
-  uv run thinkrider_logger.py --hr-name forerunner   # pick the HR watch/strap
-  uv run thinkrider_logger.py --autostart     # record without pressing Start
-  uv run thinkrider_logger.py --fit-from x2max_...   # rebuild ride.fit from a CSV
+  uv run logger/thinkrider_logger.py --hr-name forerunner   # pick the HR watch/strap
+  uv run logger/thinkrider_logger.py --autostart     # record without pressing Start
+  uv run logger/thinkrider_logger.py --fit-from rides/x2max_...   # rebuild ride.fit from a CSV
   Other options: --name X2MAX  --address AA:BB:..  --port 8000  --out ride1
                  --duration 3600  --no-browser  --hr-address ..  --no-hr
 
@@ -56,15 +56,12 @@ import json
 import os
 import glob
 import random
-import secrets
 import signal
 import socket
 import struct
 import sys
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 import webbrowser
 from datetime import datetime, timezone
 
@@ -351,7 +348,6 @@ class Live:
         self.out_dir = out_dir
         self.sess_f = self.sess_w = None
         self.ride_start = None
-        self.strava = None
         self.port = 8000
         self.fit_path = None
         self.gatt_dumped = False
@@ -377,9 +373,6 @@ class Live:
         self.sess_w = csv.DictWriter(self.sess_f, fieldnames=SESSION_FIELDS)
         self.sess_w.writeheader()
         self.status["ride"] = {**self.status["ride"], "state": "recording", "n": n, "fit": None}
-        if self.strava:
-            self.strava.upload = {"state": None}
-            self.status["strava"] = self.strava.public()
         print(f"Ride {n} started")
         self.broadcast("init", {"history": [], "laps": self.laps, "status": self.status})
 
@@ -398,6 +391,19 @@ class Live:
               + (f" - saved {self.fit_path}" if self.fit_path else " - nothing recorded"))
         self.broadcast("status", self.status)
         return self.fit_path
+
+    def clear(self):
+        """Clear button: empty the dashboard (ride so far, laps, totals) without
+        saving a .FIT. Files already in the ride folder stay on disk."""
+        if self.sess_f:
+            self.sess_f.close()
+            self.sess_f = self.sess_w = None
+        self.history, self.laps = [], [0]
+        self.distance_m = self.energy_kj = 0.0
+        self.ride_start = self.fit_path = None
+        self.status["ride"] = {**self.status["ride"], "state": "ready", "fit": None}
+        print("Dashboard cleared")
+        self.broadcast("init", {"history": [], "laps": self.laps, "status": self.status})
 
     # -- inputs ------------------------------------------------------------
     def update(self, row: dict):
@@ -533,7 +539,10 @@ async def ticker(live: Live, duration: float):
 # --------------------------------------------------------------------------
 # Tiny dependency-free web server (dashboard page + Server-Sent Events)
 # --------------------------------------------------------------------------
-HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
+# Repo layout: logger/ (this script), dashboard/ (web page), config/ (local settings),
+# rides/ (recordings).
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HTML_PATH = os.path.join(ROOT, "dashboard", "dashboard.html")
 
 
 async def handle_http(reader, writer, live: Live):
@@ -553,12 +562,6 @@ async def handle_http(reader, writer, live: Live):
             await writer.drain()
             return
         params = dict(urllib.parse.parse_qsl(query))
-        form = {}
-        if method == "POST":
-            n = int(headers.get("content-length") or 0)
-            if 0 < n <= 4096:            # small form posts only (Strava setup)
-                form = dict(urllib.parse.parse_qsl((await reader.readexactly(n)).decode("utf-8", "replace")))
-        strava = live.strava
 
         if path == "/events":
             writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
@@ -592,42 +595,6 @@ async def handle_http(reader, writer, live: Live):
         if path == "/lap" and method == "POST":
             live.add_lap()
             body, ctype, code = b"ok", "text/plain", "200 OK"
-        elif path == "/strava/connect":
-            if strava.creds():
-                code, extra = "302 Found", f"Location: {strava.authorize_url(live.port)}\r\n"
-                body, ctype = b"", "text/plain"
-            else:
-                body, ctype, code = (b"Strava is not set up yet. Open Settings on the dashboard,\n"
-                                     b"enter your Strava app's Client ID and Client Secret, then\n"
-                                     b"click Connect to Strava again."), "text/plain", "200 OK"
-        elif path == "/strava/callback":
-            msg = "connected"
-            if params.get("state") != strava.state:
-                msg = "error: sign-in link expired, click Connect to Strava again"
-            elif "code" in params and "activity:write" in params.get("scope", ""):
-                try:
-                    await asyncio.to_thread(strava.exchange_code, params["code"])
-                    print("Connected to Strava")
-                except Exception as e:
-                    msg = f"error: {e}"
-            else:
-                msg = "error: " + params.get("error", "upload permission was not granted")
-            strava.push()
-            code, body, ctype = "302 Found", b"", "text/plain"
-            extra = f"Location: /?strava={urllib.parse.quote(msg)}\r\n"
-        elif path == "/strava/setup" and method == "POST":
-            err = save_strava_app(form.get("client_id", ""), form.get("client_secret", ""))
-            if not err:
-                print("Strava app keys saved from the dashboard")
-            strava.push()
-            body, ctype = (err or "ok").encode(), "text/plain"
-            code = "400 Bad Request" if err else "200 OK"
-        elif path == "/strava/disconnect" and method == "POST":
-            strava.disconnect(); strava.push()
-            body, ctype, code = b"ok", "text/plain", "200 OK"
-        elif path == "/strava/upload" and method == "POST":
-            asyncio.ensure_future(strava.upload_last_ride())
-            body, ctype, code = b"ok", "text/plain", "200 OK"
         elif path.startswith("/devices/") and method == "POST" and live.devices:
             devs, act, role = live.devices, path[len("/devices/"):], params.get("role")
             body, ctype, code = b"ok", "text/plain", "200 OK"
@@ -645,6 +612,9 @@ async def handle_http(reader, writer, live: Live):
         elif path == "/quit" and method == "POST" and live.quit:
             print("Stop pressed on the dashboard")
             live.quit()
+            body, ctype, code = b"ok", "text/plain", "200 OK"
+        elif path == "/clear" and method == "POST":
+            live.clear()
             body, ctype, code = b"ok", "text/plain", "200 OK"
         elif path in ("/start", "/finish") and method == "POST":
             live.start_ride() if path == "/start" else live.finish_ride()
@@ -668,7 +638,7 @@ async def handle_http(reader, writer, live: Live):
                     body = f.read()
                 ctype, code = "text/html; charset=utf-8", "200 OK"
             except FileNotFoundError:
-                body = b"dashboard.html not found next to thinkrider_logger.py"
+                body = b"dashboard/dashboard.html not found: run  cd dashboard && pnpm build"
                 ctype, code = "text/plain", "500 Internal Server Error"
         else:
             body, ctype, code = b"not found", "text/plain", "404 Not Found"
@@ -1020,17 +990,9 @@ def fit_from_csv(folder):
 
 
 # --------------------------------------------------------------------------
-# Strava: OAuth "Connect to Strava" + upload of the finished .FIT
-# Uses your own Strava API app (strava.com/settings/api, callback domain
-# "localhost"). Client id/secret come from STRAVA_CLIENT_ID /
-# STRAVA_CLIENT_SECRET or strava_config.json (written by --strava-setup);
-# tokens go to strava_token.json. Both files stay on this PC (.gitignore).
+# Local settings (config/, never committed)
 # --------------------------------------------------------------------------
-STRAVA_WEB = os.environ.get("STRAVA_WEB_URL", "https://www.strava.com")
-STRAVA_API = os.environ.get("STRAVA_API_URL", "https://www.strava.com/api/v3")
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-STRAVA_CONFIG = os.path.join(APP_DIR, "strava_config.json")
-STRAVA_TOKEN = os.path.join(APP_DIR, "strava_token.json")
+APP_DIR = os.path.join(ROOT, "config")
 
 
 def _read_json(path):
@@ -1041,183 +1003,13 @@ def _read_json(path):
         return None
 
 
-def _write_private(path, data):
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as fh:
-        json.dump(data, fh, indent=2)
-
-
-def _http(method, url, data=None, headers=None, files=None):
-    """Tiny stdlib HTTP client (blocking: call through asyncio.to_thread)."""
-    headers = dict(headers or {})
-    body = None
-    if files:
-        boundary = "----x2max" + os.urandom(8).hex()
-        parts = []
-        for k, v in (data or {}).items():
-            parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"'
-                         f'\r\n\r\n{v}\r\n'.encode())
-        for k, (fname, content) in files.items():
-            parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"; '
-                         f'filename="{fname}"\r\nContent-Type: application/octet-stream'
-                         f'\r\n\r\n'.encode() + content + b"\r\n")
-        body = b"".join(parts) + f"--{boundary}--\r\n".encode()
-        headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
-    elif data is not None:
-        body = urllib.parse.urlencode(data).encode()
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-    req = urllib.request.Request(url, data=body, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return r.status, json.loads(r.read() or b"{}")
-    except urllib.error.HTTPError as e:
-        try:
-            return e.code, json.loads(e.read() or b"{}")
-        except ValueError:
-            return e.code, {"message": e.reason}
-
-
-class Strava:
-    def __init__(self, live):
-        self.live = live
-        self.upload = {"state": None}           # None | uploading | done | error
-        self.state = secrets.token_urlsafe(16)   # OAuth state: the callback must come from our own Connect link
-
-    def creds(self):
-        cid, sec = os.environ.get("STRAVA_CLIENT_ID"), os.environ.get("STRAVA_CLIENT_SECRET")
-        if cid and sec:
-            return cid, sec
-        c = _read_json(STRAVA_CONFIG) or {}
-        if c.get("client_id") and c.get("client_secret"):
-            return str(c["client_id"]), c["client_secret"]
-        return None
-
-    def public(self):
-        tok = _read_json(STRAVA_TOKEN) or {}
-        return {"configured": self.creds() is not None,
-                "connected": bool(tok.get("refresh_token")),
-                "athlete": tok.get("athlete_name"),
-                "upload": self.upload}
-
-    def push(self):
-        self.live.status["strava"] = self.public()
-        self.live.broadcast("status", self.live.status)
-
-    def authorize_url(self, port):
-        cid, _ = self.creds()
-        q = urllib.parse.urlencode({
-            "client_id": cid, "response_type": "code", "approval_prompt": "auto",
-            "redirect_uri": f"http://localhost:{port}/strava/callback",
-            "scope": "read,activity:write", "state": self.state})
-        return f"{STRAVA_WEB}/oauth/authorize?{q}"
-
-    def _save_token(self, r, old=None):
-        athlete = (r.get("athlete") or {})
-        name = " ".join(x for x in (athlete.get("firstname"), athlete.get("lastname")) if x)
-        _write_private(STRAVA_TOKEN, {
-            "access_token": r["access_token"], "refresh_token": r["refresh_token"],
-            "expires_at": r["expires_at"],
-            "athlete_name": name or (old or {}).get("athlete_name")})
-
-    def exchange_code(self, code):
-        cid, sec = self.creds()
-        st, r = _http("POST", f"{STRAVA_WEB}/oauth/token", {
-            "client_id": cid, "client_secret": sec, "code": code,
-            "grant_type": "authorization_code"})
-        if st != 200 or "access_token" not in r:
-            raise RuntimeError(r.get("message") or f"HTTP {st}")
-        self._save_token(r)
-
-    def access_token(self):
-        tok = _read_json(STRAVA_TOKEN)
-        if not tok:
-            raise RuntimeError("not connected to Strava")
-        if tok["expires_at"] - time.time() < 120:
-            cid, sec = self.creds()
-            st, r = _http("POST", f"{STRAVA_WEB}/oauth/token", {
-                "client_id": cid, "client_secret": sec,
-                "grant_type": "refresh_token", "refresh_token": tok["refresh_token"]})
-            if st != 200 or "access_token" not in r:
-                raise RuntimeError("Strava sign-in expired - click Connect to Strava again")
-            self._save_token(r, tok)
-            tok = _read_json(STRAVA_TOKEN)
-        return tok["access_token"]
-
-    def disconnect(self):
-        try:
-            os.remove(STRAVA_TOKEN)
-        except OSError:
-            pass
-
-    def upload_fit(self, path, name):
-        """Blocking. Returns the Strava activity URL."""
-        auth = {"Authorization": f"Bearer {self.access_token()}"}
-        with open(path, "rb") as fh:
-            content = fh.read()
-        st, r = _http("POST", f"{STRAVA_API}/uploads", headers=auth,
-                      data={"data_type": "fit", "name": name, "trainer": "1",
-                            "external_id": os.path.basename(path)},
-                      files={"file": (os.path.basename(path), content)})
-        if st >= 300 or "id" not in r:
-            raise RuntimeError(r.get("error") or r.get("message") or f"HTTP {st}")
-        for _ in range(30):                    # Strava processes uploads async
-            if r.get("error"):
-                raise RuntimeError(r["error"])
-            if r.get("activity_id"):
-                return f"{STRAVA_WEB}/activities/{r['activity_id']}"
-            time.sleep(2)
-            st, r = _http("GET", f"{STRAVA_API}/uploads/{r['id']}", headers=auth)
-        raise RuntimeError("Strava is still processing - check your Strava feed in a minute")
-
-    async def upload_last_ride(self):
-        path = self.live.fit_path
-        if not path or self.live.recording or self.upload.get("state") == "uploading":
-            return
-        start = self.live.ride_start
-        name = f"Indoor ride {start:%Y-%m-%d %H:%M}" if start else "Indoor ride"
-        self.upload = {"state": "uploading", "file": os.path.basename(path)}
-        self.push()
-        try:
-            url = await asyncio.to_thread(self.upload_fit, path, name)
-            self.upload = {"state": "done", "file": os.path.basename(path), "url": url}
-            print(f"Uploaded to Strava: {url}")
-        except Exception as e:
-            self.upload = {"state": "error", "file": os.path.basename(path), "error": str(e)}
-            print(f"Strava upload failed: {e}")
-        self.push()
-
-
-def save_strava_app(cid, sec):
-    """Save the Strava API app keys (dashboard Settings or --strava-setup).
-    Returns an error message, or None when saved."""
-    cid, sec = cid.strip(), sec.strip()
-    if not cid.isdigit() or not (20 <= len(sec) <= 100) or not sec.isalnum():
-        return "That doesn't look right: the Client ID is a number, the Client Secret about 40 letters and digits."
-    _write_private(STRAVA_CONFIG, {"client_id": cid, "client_secret": sec})
-    return None
-
-
-def strava_setup():
-    import getpass
-    print("Strava setup\n"
-          "1. Open https://www.strava.com/settings/api and create an app\n"
-          "   (any name/website; Authorization Callback Domain: localhost).\n"
-          "2. Copy its Client ID and Client Secret below. They are saved only in\n"
-          f"   {STRAVA_CONFIG} (never committed).\n")
-    cid = input("Client ID: ").strip()
-    sec = getpass.getpass("Client Secret (hidden): ").strip()
-    err = save_strava_app(cid, sec)
-    if err:
-        sys.exit(err)
-    print("Saved. Start the logger and click 'Connect to Strava' on the dashboard.")
-
-
 # --------------------------------------------------------------------------
 # Device choice: which trainer and heart-rate device to use. Picked on the
-# dashboard's device panel; the last pick is kept in devices.json (next to
-# the script) and reconnected automatically on the next start.
+# dashboard's device panel; the last pick is kept in config/devices.json (in
+# this repo) and reconnected automatically on the next start.
 # --------------------------------------------------------------------------
 DEVICES_FILE = os.path.join(APP_DIR, "devices.json")
+
 ROLES = ("trainer", "hr")
 KIND_ORDER = {"trainer": 0, "hr": 1, "other": 2}
 
@@ -1259,6 +1051,7 @@ class Devices:
             return
         self.saved[role] = self.choice[role]
         try:
+            os.makedirs(APP_DIR, exist_ok=True)
             with open(DEVICES_FILE, "w") as fh:
                 json.dump(self.saved, fh, indent=2)
         except OSError as e:
@@ -1543,8 +1336,6 @@ async def main_async(args):
     os.makedirs(args.out, exist_ok=True)
     live = Live(args.out)
     live.port = args.port
-    live.strava = Strava(live)
-    live.status["strava"] = live.strava.public()
     live.devices = devices = Devices(live, args, demo=args.demo)
     t0 = time.monotonic()
 
@@ -1631,8 +1422,6 @@ def main():
     p.add_argument("--no-hr", action="store_true", help="don't look for a separate heart-rate device")
     p.add_argument("--autostart", action="store_true",
                    help="start recording right away instead of waiting for Start")
-    p.add_argument("--strava-setup", action="store_true",
-                   help="save your Strava API app's Client ID/Secret on this PC, then exit")
     p.add_argument("--fit-from", metavar="FOLDER",
                    help="only rebuild FOLDER/ride.fit from its session_1hz.csv, then exit")
     p.add_argument("--duration", type=float, default=0,
@@ -1641,15 +1430,13 @@ def main():
     p.add_argument("--host", default="127.0.0.1", help="use 0.0.0.0 to view from phone/tablet")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--no-browser", action="store_true", help="don't open the dashboard automatically")
-    p.add_argument("--out", default=datetime.now().strftime("x2max_%Y%m%d_%H%M%S"),
+    p.add_argument("--out", default=os.path.join(ROOT, "rides", datetime.now().strftime("x2max_%Y%m%d_%H%M%S")),
                    help="output folder")
     args = p.parse_args()
     if args.fit_from:
         return fit_from_csv(args.fit_from)
-    if args.strava_setup:
-        return strava_setup()
     if BleakScanner is None and not args.demo:
-        sys.exit("bleak is not installed. Run with:  uv run thinkrider_logger.py   (or try --demo)")
+        sys.exit("bleak is not installed. Run with:  uv run logger/thinkrider_logger.py   (or try --demo)")
     try:
         asyncio.run(scan(args.scan_time) if args.scan else main_async(args))
     except (KeyboardInterrupt, asyncio.CancelledError):

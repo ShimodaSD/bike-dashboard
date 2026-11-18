@@ -16,7 +16,7 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 # shellcheck disable=SC2086
-uv run thinkrider_logger.py $EXTRA_ARGS "$@"
+uv run logger/thinkrider_logger.py $EXTRA_ARGS "$@"
 code=$?
 if [ $code -ne 0 ]; then
   echo

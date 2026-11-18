@@ -1,0 +1,11 @@
+<workout_file>
+    <author>X2Max dashboard</author>
+    <name>Power test · Sweet spot 3x3</name>
+    <description>18 min. Power targets (% of your FTP): warm-up ramp, 3 x 3 min at 90 % with 1 min easy, cool-down.</description>
+    <sportType>bike</sportType>
+    <workout>
+        <Warmup Duration="240" PowerLow="0.50" PowerHigh="0.75"/>
+        <IntervalsT Repeat="3" OnDuration="180" OffDuration="60" OnPower="0.90" OffPower="0.55"/>
+        <Cooldown Duration="120" PowerLow="0.65" PowerHigh="0.45"/>
+    </workout>
+</workout_file>

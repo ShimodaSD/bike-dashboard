@@ -3,6 +3,22 @@
 Log every Bluetooth LE packet from a ThinkRider X2Max (or any FTMS / Cycling Power
 smart trainer) and watch a live training dashboard in your browser.
 
+## Folders
+
+```
+Start X2Max.command   double-click to start (macOS)
+logger/               thinkrider_logger.py: Bluetooth, recording, .FIT, web server
+dashboard/            dashboard.html (built, served by the logger) and its React source in src/
+  src/workout/        workout files: reading .zwo / .erg / .mrc, step targets, off-target beep
+tests/                self-check for the logger
+workouts/             test workouts: power, heart rate, cadence and speed targets (load them in Settings)
+rides/                your recordings, one folder per run (not committed)
+config/               devices.json (your trainer / HR pick), kept on this computer (not committed)
+```
+
+New code goes in the folder it belongs to; a new dashboard feature gets its own folder in
+`dashboard/src/`.
+
 ## Run it
 
 Needs [uv](https://docs.astral.sh/uv/). `uv run` creates the virtual environment and
@@ -21,7 +37,7 @@ connected and scans for nearby trainers and heart-rate broadcasts for a few seco
 **Connect** next to the X2Max and next to the Forerunner, **Disconnect** to drop one, or
 connect another device to switch. Other Bluetooth devices are under **Show other devices**.
 
-Your picks are saved in `devices.json` next to the script, and the logger connects to
+Your picks are saved in `config/devices.json`, and the logger connects to
 them by itself on the next start. On the very first start (nothing picked yet) it takes
 the first ThinkRider / FTMS trainer and the first heart-rate broadcast it finds, and the
 panel opens so you can change that. Disconnecting the trainer during a ride pauses the
@@ -31,13 +47,12 @@ to the trainer.
 Command line, if you prefer:
 
 ```bash
-uv run thinkrider_logger.py            # find the trainer, log + open the dashboard
-uv run thinkrider_logger.py --demo     # simulated ride, no trainer needed
-uv run thinkrider_logger.py --scan     # list nearby BLE devices
-uv run thinkrider_logger.py --host 0.0.0.0   # view from a phone/tablet on the same Wi-Fi
-uv run thinkrider_logger.py --hr-name forerunner   # pick the heart-rate watch/strap by name
+uv run logger/thinkrider_logger.py            # find the trainer, log + open the dashboard
+uv run logger/thinkrider_logger.py --demo     # simulated ride, no trainer needed
+uv run logger/thinkrider_logger.py --scan     # list nearby BLE devices
+uv run logger/thinkrider_logger.py --host 0.0.0.0   # view from a phone/tablet on the same Wi-Fi
+uv run logger/thinkrider_logger.py --hr-name forerunner   # pick the heart-rate watch/strap by name
                                                    # (--address / --hr-address / --no-hr also work)
-uv run thinkrider_logger.py --strava-setup   # one-time: save your Strava API app keys
 ```
 
 Close Zwift / the ThinkRider app first: the trainer usually allows only one Bluetooth connection.
@@ -46,13 +61,13 @@ Press **Start** on the dashboard to begin recording and **Finish** to end the ri
 (click it twice, so a stray click can't end it). Before Start the dashboard shows live
 numbers but saves nothing. Use `--autostart` to record straight away.
 
-Each run is saved to `x2max_YYYYMMDD_HHMMSS/`: `ride_<date>_<time>.fit` (one per ride),
+Each run is saved to `rides/x2max_YYYYMMDD_HHMMSS/`: `ride_<date>_<time>.fit` (one per ride),
 `session_1hz.csv`, `decoded.csv`, `raw_packets.csv` and `gatt_dump.json`. Ctrl+C in the
 middle of a ride still saves the `.fit`. To rebuild the `.fit` files from the saved CSVs
 (`session_1hz.csv` -> `ride.fit`, `session_1hz_2.csv` -> `ride_2.fit`, ...):
-`uv run thinkrider_logger.py --fit-from x2max_YYYYMMDD_HHMMSS`.
+`uv run logger/thinkrider_logger.py --fit-from rides/x2max_YYYYMMDD_HHMMSS`.
 
-Self-check for the packet decoder and the `.fit` writer: `uv run python -m unittest test_logger`.
+Self-check for the packet decoder and the `.fit` writer: `uv run python -m unittest discover tests`.
 
 ## Heart rate from a Garmin watch (Forerunner 165)
 
@@ -75,32 +90,18 @@ apps that might grab it.
 ## Strava and Garmin Connect
 
 The `.fit` file is a standard cycling / indoor-cycling activity (power, cadence, speed,
-distance, heart rate, laps). Upload it by hand at
-[strava.com/upload/select](https://www.strava.com/upload/select) or Garmin Connect
-(Import Data), or let the dashboard upload it to Strava:
-
-1. Create your own Strava API app at
-   [strava.com/settings/api](https://www.strava.com/settings/api). Any name and
-   website are fine; set **Authorization Callback Domain** to `localhost`.
-2. On the dashboard open **Settings**, paste the Client ID and Client Secret under
-   **Strava** and click **Save keys** (or run `uv run thinkrider_logger.py --strava-setup`).
-   They are saved in `strava_config.json` next to the script (or set
-   `STRAVA_CLIENT_ID` / `STRAVA_CLIENT_SECRET`). Don't share the secret.
-3. Click **Connect to Strava** on the dashboard and approve on Strava's page. The
-   sign-in is kept in `strava_token.json` and refreshed automatically.
-4. After **Finish**, click **Upload to Strava**. The button turns into a link to the
-   new activity. Strava rejects a file it already has, so a ride can't be uploaded twice.
-
-Both files are in `.gitignore`. Connect from the PC running the logger (Strava sends you
-back to `localhost`); uploads work from any device after that.
+distance, heart rate, laps). After **Finish**, click **Send to Strava** or **Send to
+Garmin Connect**: it downloads the `.fit` and opens the site's upload page in a new tab,
+where you drag the file in (Strava: [strava.com/upload/select](https://www.strava.com/upload/select),
+Garmin: Import Data). There is no automatic upload: Strava's API needs a paid subscription.
 
 ## Dashboard
 
-`dashboard.html` is served by the script at http://localhost:8000. It shows power
+`dashboard/dashboard.html` is served by the script at http://localhost:8000. It shows power
 (3 s), cadence, speed, heart rate, power zones, NP / IF / TSS, W/kg, laps and live
-power / cadence / HR charts. While recording it shows a red REC strip and frame;
+power / cadence / HR / speed charts. While recording it shows a red REC strip and frame;
 after Finish it shows the ride's summary. Keys: `S` start, `L` lap, `F` twice to
-finish. FTP, weight, Strava account and CSV export are under **Settings**; FTP,
+finish. FTP, weight, workout, CSV export and **Clear all data** are under **Settings**; FTP,
 weight and chart window are remembered in the browser.
 
 The big numbers update on every reading the trainer sends (a few times a second), within
@@ -109,18 +110,42 @@ Power number** switches between instant power and a 3 s / 5 s average. **Live up
 is instant on a computer and capped at 2 updates a second on a phone or tablet to save
 its battery (change it there).
 
+### Workouts
+
+**Settings > Workout > Load workout** reads a Zwift `.zwo`, an `.erg` (watts) or an `.mrc`
+(% FTP) file. A band above the big numbers then shows the current step, its target power,
+cadence, heart rate and/or speed, time left, the next step and a profile of the whole
+workout. The workout starts with **Start** and follows the ride timer. When power is more
+than 7 % (at least 10 W) off the target, cadence more than 8 rpm off, or heart rate more
+than 5 bpm off (checked from 30 s into a step, since heart rate is slow to follow), or speed
+more than 2 km/h off, the band turns
+yellow and it beeps: two rising beeps for too low, one falling beep for too high. It beeps
+at most once every 15 s, and not in the first 8 s of a step. Turn the beep off or test it
+under **Settings > Workout**. The logger does not control the trainer (no ERG mode). The
+workout is remembered in the browser, and its targets are drawn on the charts.
+
+Heart-rate targets are an extra `.zwo` attribute (Zwift ignores it): `HeartRate="140"` on a
+step, or `OnHeartRate` / `OffHeartRate` on `IntervalsT`; speed the same way with `Speed="30"`
+(km/h) or `OnSpeed` / `OffSpeed`. Cadence uses Zwift's own
+`Cadence` attribute. Four test workouts are in `workouts/`:
+
+- `power-sweet-spot.zwo` (18 min): power steps in % FTP, 3 x 3 min at 90 %.
+- `heart-rate-zones.zwo` (18 min): hold 110 / 130 / 115 / 145 / 115 bpm. Edit the numbers to your zones.
+- `cadence-drills.zwo` (16 min): 70 to 110 rpm blocks at an easy effort.
+- `speed-steps.zwo` (16 min): 24 to 33 km/h steps. Trainer speed depends on gear, so adjust.
+
 It is a React app in `dashboard/`, compiled into the single self-contained
-`dashboard.html` (works offline, no CDN). The built file is committed, so you only
+`dashboard/dashboard.html` (works offline, no CDN). The built file is committed, so you only
 need Node.js and [pnpm](https://pnpm.io/) if you change the dashboard:
 
 ```bash
 cd dashboard
 pnpm install
-pnpm build           # rewrites ../dashboard.html
+pnpm build           # rewrites dashboard/dashboard.html
 ```
 
 The script talks to the page over `GET /events` (Server-Sent Events: `init`,
-`sample`, `preview`, `live`, `status`, `laps`; `/events?live=2` caps `live` at 2/s), `POST /start`, `/finish`, `/lap`, `/quit`, `/strava/setup`,
+`sample`, `preview`, `live`, `status`, `laps`; `/events?live=2` caps `live` at 2/s), `POST /start`, `/finish`, `/lap`, `/clear`, `/quit`,
 `POST /devices/scan`, `/devices/use?role=trainer|hr&address=..&name=..`,
-`/devices/off?role=..`, `GET /ride.fit` and the `/strava/...` routes. POSTs from other
+`/devices/off?role=..` and `GET /ride.fit`. POSTs from other
 sites are refused.

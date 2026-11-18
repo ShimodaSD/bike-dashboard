@@ -251,13 +251,16 @@ __marimo__/
 # Node
 node_modules/
 
-# Ride recordings made by thinkrider_logger.py
+# Ride recordings made by logger/thinkrider_logger.py
+rides/
 x2max_*/
 
-# Strava credentials and sign-in token (thinkrider_logger.py --strava-setup)
-strava_config.json
-strava_token.json
+# Local settings written by the logger (devices.json)
+config/
 
 # Trainer / heart-rate device picked on the dashboard (thinkrider_logger.py)
 devices.json
 
+
+# macOS
+.DS_Store

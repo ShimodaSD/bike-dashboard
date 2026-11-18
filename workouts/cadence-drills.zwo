@@ -1,0 +1,19 @@
+<workout_file>
+    <author>X2Max dashboard</author>
+    <name>Cadence test · Spin-ups</name>
+    <description>16 min. Cadence targets in rpm at an easy effort you choose: steady 85-90 rpm with fast spin-ups and slow, strong low-cadence blocks.</description>
+    <sportType>bike</sportType>
+    <workout>
+        <FreeRide Duration="180" Cadence="85"/>
+        <FreeRide Duration="60" Cadence="100"/>
+        <FreeRide Duration="60" Cadence="85"/>
+        <FreeRide Duration="60" Cadence="110"/>
+        <FreeRide Duration="60" Cadence="85"/>
+        <FreeRide Duration="120" Cadence="70"/>
+        <FreeRide Duration="60" Cadence="90"/>
+        <FreeRide Duration="60" Cadence="105"/>
+        <FreeRide Duration="60" Cadence="90"/>
+        <FreeRide Duration="120" Cadence="75"/>
+        <FreeRide Duration="120" Cadence="85"/>
+    </workout>
+</workout_file>

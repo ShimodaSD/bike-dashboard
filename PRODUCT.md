@@ -16,14 +16,14 @@ Record every ride on the X2Max from macOS, where the ThinkRider app can't read t
 
 ## Positioning
 
-A small local tool instead of a heavy training app: it works on macOS where ThinkRider doesn't, and it stays light on battery compared to apps like Zwift. It works fully offline: no account, no internet needed to ride, record or view the dashboard. Strava upload is the only optional online step, and it never writes to the trainer.
+A small local tool instead of a heavy training app: it works on macOS where ThinkRider doesn't, and it stays light on battery compared to apps like Zwift. It works fully offline: no account, no internet needed to ride, record or view the dashboard. Sending a ride to Strava is a manual upload of the .FIT, and it never writes to the trainer.
 
 ## Operating Context
 
-- `uv run thinkrider_logger.py` connects over Bluetooth LE to the trainer and, optionally, a Garmin Forerunner 165 broadcasting heart rate, then serves the dashboard at `http://localhost:8000`.
+- `uv run logger/thinkrider_logger.py` connects over Bluetooth LE to the trainer and, optionally, a Garmin Forerunner 165 broadcasting heart rate, then serves the dashboard at `http://localhost:8000`.
 - Press Start to record, Finish (double click) to end the ride. Before Start the dashboard shows live numbers but saves nothing.
 - Zwift and the ThinkRider app must be closed: the trainer and the watch accept one Bluetooth connection at a time.
-- Rides are saved to `x2max_YYYYMMDD_HHMMSS/` and can be uploaded to Strava from the dashboard.
+- Rides are saved to `rides/x2max_YYYYMMDD_HHMMSS/` and sent to Strava or Garmin Connect from the dashboard (downloads the .FIT and opens the upload page).
 
 ## Capabilities and Constraints
 

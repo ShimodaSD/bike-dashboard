@@ -1,12 +1,15 @@
-// X2Max live dashboard (React). Talks to thinkrider_logger.py:
+// X2Max live dashboard (React). Talks to logger/thinkrider_logger.py:
 //   GET  /events  Server-Sent Events: init, sample, preview, status, laps,
 //                 live (instant numbers on every trainer packet; ?live=2 caps it at 2/s)
 //   POST /lap     start a new lap
 //   POST /start, /finish   begin / end a recorded ride
 //   POST /devices/scan, /devices/use|off?role=trainer|hr   device panel
+//   POST /clear   empty the dashboard (files on disk stay)
 //   POST /quit    stop the logger
+//   GET  /ride.fit  the finished ride (or the ride so far)
 import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
+import { WorkoutBand, WorkoutSettings, plannedLine, powerTol, CAD_TOL, HR_TOL, SPEED_TOL } from './workout/workout.jsx';
 
 // ------------------------------------------------------------------ constants & helpers
 const ZONES = [
@@ -140,7 +143,7 @@ const HR_STATUS = {
   off:          ['--text-muted', () => 'HR · off'],
 };
 
-// A button that needs a second click within 4 s (Finish, Start over an unsaved ride, Disconnect).
+// A button that needs a second click within 4 s (Finish, Start over an unsaved ride, Clear, Stop).
 function useArmed(resetKey) {
   const [armed, setArmed] = useState(false);
   useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), 4000); return () => clearTimeout(t); }, [armed]);
@@ -180,13 +183,23 @@ function Header({ status, ride, act, settingsOpen, toggleSettings, devicesOpen, 
 }
 
 // ------------------------------------------------------------------ settings (disclosure, not a modal)
-function Settings({ ftp, setFtp, kg, setKg, strava, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate }) {
+function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout }) {
   const [ftpDraft, setFtpDraft] = useState(String(ftp));
   const [ftpErr, setFtpErr] = useState(false);
   useEffect(() => setFtpDraft(String(ftp)), [ftp]);
   const commitFtp = () => {
     const v = Math.round(+ftpDraft);
     if (v >= 50 && v <= 600) { setFtp(v); setFtpErr(false); } else { setFtpErr(true); setFtpDraft(String(ftp)); }
+  };
+  // typed as text so a half-typed "7" or a comma ("72,5") isn't wiped while typing
+  const [kgDraft, setKgDraft] = useState(kg == null ? '' : String(kg));
+  const [kgErr, setKgErr] = useState(false);
+  useEffect(() => setKgDraft(kg == null ? '' : String(kg)), [kg]);
+  const commitKg = () => {
+    const t = kgDraft.trim().replace(',', '.'), v = Math.round(+t * 10) / 10;
+    if (t === '') { setKg(null); setKgErr(false); }
+    else if (v >= 30 && v <= 200) { setKg(v); setKgDraft(String(v)); setKgErr(false); }
+    else setKgErr(true);
   };
   return (
     <section className="settings" id="settings" aria-label="Settings">
@@ -204,10 +217,12 @@ function Settings({ ftp, setFtp, kg, setKg, strava, onCsv, canCsv, smooth, setSm
       <div className="field">
         <label htmlFor="kg">Weight</label>
         <div className="inline">
-          <input id="kg" type="number" inputMode="decimal" min="30" max="200" step="0.1" value={kg ?? ''}
-                 onChange={e => { const v = +e.target.value; setKg(v >= 30 && v <= 200 ? v : null); }} /> kg
+          <input id="kg" type="text" inputMode="decimal" value={kgDraft} aria-invalid={kgErr}
+                 onChange={e => { setKgDraft(e.target.value); setKgErr(false); }} onBlur={commitKg}
+                 onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} /> kg
         </div>
-        <p className="help">Used for W/kg. Stays in this browser.</p>
+        <p className={'help' + (kgErr ? ' err' : '')}>
+          {kgErr ? 'Weight must be between 30 and 200 kg.' : 'Used for W/kg. FTP and weight are remembered in this browser.'}</p>
       </div>
       <div className="field">
         <label htmlFor="smooth">Power number</label>
@@ -232,13 +247,17 @@ function Settings({ ftp, setFtp, kg, setKg, strava, onCsv, canCsv, smooth, setSm
         <p className="help">Automatic is instant on a computer and battery saver on a phone or tablet.</p>
       </div>
       <div className="field">
-        <span className="flabel">Strava</span>
-        <StravaAccount strava={strava} />
+        <span className="flabel">Workout</span>
+        <WorkoutSettings {...workout} />
       </div>
       <div className="field">
         <span className="flabel">This ride</span>
         <div className="inline"><button onClick={onCsv} disabled={!canCsv}>Export CSV</button></div>
         <p className="help">The logger also writes a CSV and a .FIT file to its ride folder.</p>
+      </div>
+      <div className="field">
+        <span className="flabel">Clear data</span>
+        <ClearData recording={recording} />
       </div>
       <div className="field">
         <span className="flabel">Logger</span>
@@ -252,6 +271,16 @@ function Settings({ ftp, setFtp, kg, setKg, strava, onCsv, canCsv, smooth, setSm
       </div>
     </section>
   );
+}
+
+function ClearData({ recording }) {
+  const [armed, setArmed] = useArmed();
+  return <>
+    <div className="inline"><button className={armed ? 'danger' : ''} onClick={() => armed ? (post('/clear'), setArmed(false)) : setArmed(true)}>
+      {armed ? 'Click again to clear' : 'Clear all data'}</button></div>
+    <p className="help">Empties the dashboard: ride, laps, totals and charts.
+      {recording ? ' The ride in progress stops and is not saved as .FIT.' : ''} Files already in the ride folder are kept.</p>
+  </>;
 }
 
 function StopLogger() {
@@ -367,9 +396,9 @@ function Devices({ status, recording }) {
 }
 
 // ------------------------------------------------------------------ tiles
-function Tile({ label, keyColor, value, unit, sub, className = '', badge, children }) {
+function Tile({ label, keyColor, value, unit, sub, className = '', badge, style, children }) {
   return (
-    <div className={'tile ' + className}>
+    <div className={'tile ' + className} style={style}>
       <div className="label">{keyColor && <span className="key" style={{ background: `var(${keyColor})` }} />}{label}{badge}</div>
       <div className="value">{value}{unit && <span className="unit">{unit}</span>}</div>
       {sub !== undefined && <div className="sub">{sub || ' '}</div>}
@@ -388,7 +417,7 @@ function livePower(now, recent, smooth) {
   return w.length ? w.reduce((t, x) => t + x.p, 0) / w.length : now.power_w;
 }
 
-function Hero({ hist, st, ftp, preview, mode, now, recent, smooth }) {
+function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth }) {
   const done = mode === 'finished' && hist.length > 0;
   const fresh = now && Date.now() - now.at < FRESH_MS;
   const live = fresh ? [now] : mode === 'recording' ? hist : preview ? [preview] : [];
@@ -397,12 +426,15 @@ function Hero({ hist, st, ftp, preview, mode, now, recent, smooth }) {
   const zi = p > 0 ? zoneOf(p, ftp) : -1;
   const z = ZONES[zi];
   const zoneTxt = p > 0 ? <><b>{z.n} {z.name}</b> · {Math.round((p / ftp) * 100)}% FTP</> : null;
+  // current lap at a glance: number, time and average power so far
+  const lapStart = laps[laps.length - 1] || 0, lapRows = hist.slice(lapStart);
+  const lapAvg = lapRows.length ? lapRows.reduce((t, s) => t + (s.power_w || 0), 0) / lapRows.length : null;
   const timeBadge = mode === 'recording' ? <span className="badge rec">REC</span>
                   : mode === 'finished' ? <span className="badge done">Saved</span>
                   : null;   // the strip above already says Preview
   return (
     <section className={'hero ' + mode}>
-      <Tile className="power" label={done ? 'Avg power · ride' : smooth ? `Power · ${smooth} s` : 'Power'} keyColor="--power" value={r0(p)} unit="W"
+      <Tile className={'power' + (zi >= 0 ? ' zoned' : '')} style={zi >= 0 ? { '--zc': `var(--z${zi + 1})` } : undefined} label={done ? 'Avg power · ride' : smooth ? `Power · ${smooth} s` : 'Power'} keyColor="--power" value={r0(p)} unit="W"
             sub={done ? <>{zoneTxt}{last ? <span className="live-now"> · now {r0(avg3(live))} W</span> : null}</>
                       : !last ? '' : p > 0 ? zoneTxt : 'Not pedaling'}>
         <div className="zonebar" aria-hidden="true">
@@ -411,11 +443,14 @@ function Hero({ hist, st, ftp, preview, mode, now, recent, smooth }) {
       </Tile>
       <Tile className={'time ' + mode} label="Ride time" badge={timeBadge}
             value={mode === 'ready' ? '0:00' : fmtT(hist.length)}
-            sub={mode === 'recording' ? `moving ${fmtT(st.moving)}` : mode === 'finished' ? `moving ${fmtT(st.moving)}` : 'Press Start to record'} />
+            sub={mode === 'ready' ? 'Press Start to record' : `moving ${fmtT(st.moving)}`}>
+        {mode === 'recording' && <div className="lapnow" aria-label="Current lap">
+          <b>Lap {laps.length}</b><span>{fmtT(lapRows.length)}</span><span>{r0(lapAvg)} W avg</span></div>}
+      </Tile>
       <Tile label={done ? 'Avg cadence' : 'Cadence'} keyColor="--cadence" unit="rpm"
             value={done ? r0(st.avgCad) : last ? r0(last.cadence_rpm) : '–'}
             sub={!done && mode === 'recording' && st.avgCad ? `avg ${Math.round(st.avgCad)}` : ''} />
-      <Tile label={done ? 'Avg speed' : 'Speed'} unit="km/h"
+      <Tile label={done ? 'Avg speed' : 'Speed'} keyColor="--speed" unit="km/h"
             value={done ? (st.avgSpd ? st.avgSpd.toFixed(1) : '–') : last && nz(last.speed_kmh) ? last.speed_kmh.toFixed(1) : '–'}
             sub={mode === 'recording' && st.avgSpd ? `avg ${st.avgSpd.toFixed(1)}`
                  : last && !nz(last.speed_kmh) && !done ? 'Trainer sends no speed' : ''} />
@@ -438,8 +473,8 @@ function Stats({ hist, st, ftp, kg, more, setMore, mode }) {
       <Tile label="Normalized power" value={r0(st.np)} unit="W" sub={st.np ? '' : 'after 30 s'} />
       {done ? <Tile label="Max power" value={r0(st.maxP)} unit="W" /> : <Tile label="Avg power" value={r0(st.avgP)} unit="W" />}
       <Tile label="Distance" value={(st.dist / 1000).toFixed(2)} unit="km" />
-      {/* ~1 kJ of work ≈ 1 kcal burned (≈24 % gross efficiency) */}
-      <Tile label="Energy" value={Math.round(st.kj)} unit="kJ" sub={`≈ ${Math.round(st.kj)} kcal`} />
+      {/* ~1 kJ of work ≈ 1 kcal burned (≈24 % gross efficiency), so one number covers both */}
+      <Tile label="Energy" value={Math.round(st.kj)} unit="kJ" sub="≈ kcal burned" />
       {more && <>
         {done ? <Tile label="Avg power" value={r0(st.avgP)} unit="W" /> : <Tile label="Max power" value={r0(st.maxP)} unit="W" />}
         <Tile label="Intensity factor" value={IF ? IF.toFixed(2) : '–'} sub="NP ÷ FTP" />
@@ -456,7 +491,8 @@ function Stats({ hist, st, ftp, kg, more, setMore, mode }) {
 const CHARTS = [
   { key: 'power_w', color: '--power', fill: true, min: 0, floorMax: 300, ftpRef: true, title: 'Power (W) · dashed line = FTP', name: 'Power', unit: 'W', h: 170 },
   { key: 'cadence_rpm', color: '--cadence', min: 0, floorMax: 120, title: 'Cadence (rpm)', name: 'Cadence', unit: 'rpm', h: 100 },
-  { key: 'heart_rate_bpm', color: '--hr', autoMin: true, floorMax: 160, title: 'Heart rate (bpm)', name: 'Heart rate', unit: 'bpm', h: 124, xaxis: true },
+  { key: 'heart_rate_bpm', color: '--hr', autoMin: true, floorMax: 160, title: 'Heart rate (bpm)', name: 'Heart rate', unit: 'bpm', h: 100 },
+  { key: 'speed_kmh', color: '--speed', min: 0, floorMax: 40, title: 'Speed (km/h)', name: 'Speed', unit: 'km/h', h: 124, xaxis: true },
 ];
 
 function niceStep(range, n) {
@@ -465,9 +501,16 @@ function niceStep(range, n) {
 }
 
 // Whole ride until it is longer than the window, then the last `win` seconds.
-function xRange(n, win) {
-  if (win && n > win) return [n - win, n - 1];
-  return [0, Math.max(n - 1, 59)];
+// With a workout loaded the axis also shows what is coming: the whole plan, or the
+// next third of the window.
+function xRange(n, win, planEnd = 0) {
+  if (!planEnd) {
+    if (win && n > win) return [n - win, n - 1];
+    return [0, Math.max(n - 1, 59)];
+  }
+  if (!win) return [0, Math.max(n - 1, planEnd, 59)];
+  const x0 = Math.max(0, Math.round(n - (win * 2) / 3));
+  return [x0, x0 + win - 1];
 }
 
 function useWidth(ref) {
@@ -480,11 +523,12 @@ function useWidth(ref) {
   return w;
 }
 
-function Chart({ c, hist, laps, ftp, win, version, hover, setHover }) {
+function Chart({ c, hist, laps, ftp, win, version, hover, setHover, workout }) {
   const cv = useRef(null);
   const W = useWidth(cv), H = c.h;
   const pad = { l: 40, r: 10, t: 8, b: c.xaxis ? 22 : 6 };
-  const [x0, x1] = xRange(hist.length, win);
+  const [x0, x1] = xRange(hist.length, win, workout ? workout.total : 0);
+  const plan = useMemo(() => (workout ? plannedLine(workout, ftp, c.key) : []), [workout, ftp, c.key]);
 
   useEffect(() => {
     const el = cv.current; if (!el || !W) return;
@@ -500,7 +544,9 @@ function Chart({ c, hist, laps, ftp, win, version, hover, setHover }) {
     let ymax = c.floorMax, ymin = c.min ?? 0, vmin = Infinity;
     for (const v of vals) { if (v > ymax) ymax = v; if (v < vmin) vmin = v; }
     if (c.ftpRef) ymax = Math.max(ymax, ftp * 1.15);
+    for (const p of plan) if (p.t1 > x0 && p.t0 <= x1) ymax = Math.max(ymax, p.a * 1.1, p.b * 1.1);
     if (c.autoMin) ymin = vals.length ? Math.max(0, Math.floor((vmin - 10) / 20) * 20) : 60;
+    for (const p of plan) if (c.autoMin && p.t1 > x0 && p.t0 <= x1) ymin = Math.min(ymin, Math.max(0, Math.floor((Math.min(p.a, p.b) - 15) / 20) * 20));
     const step = niceStep(ymax - ymin, 4); ymax = Math.ceil(ymax / step) * step;
     const X = t => pad.l + ((t - x0) / Math.max(1, x1 - x0)) * (W - pad.l - pad.r);
     const Y = v => pad.t + (1 - (v - ymin) / (ymax - ymin)) * (H - pad.t - pad.b);
@@ -529,6 +575,24 @@ function Chart({ c, hist, laps, ftp, win, version, hover, setHover }) {
       const y = Math.round(Y(ftp)) + 0.5;
       g.strokeStyle = tok.sec; g.setLineDash([6, 5]); g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke(); g.setLineDash([]);
       g.fillStyle = tok.sec; g.textAlign = 'left'; g.textBaseline = 'bottom'; g.fillText('FTP ' + ftp, pad.l + 4, y - 3);
+    }
+    // planned workout: target band (the on-target range) and the target line
+    if (plan.length) {
+      const tol = v => (c.key === 'power_w' ? powerTol(v) : c.key === 'heart_rate_bpm' ? HR_TOL : c.key === 'speed_kmh' ? SPEED_TOL : CAD_TOL);
+      const cl = t => Math.min(Math.max(t, x0), x1);
+      g.save(); g.beginPath(); g.rect(pad.l, pad.t, W - pad.l - pad.r, H - pad.t - pad.b); g.clip();
+      for (const p of plan) {
+        if (p.t1 <= x0 || p.t0 > x1) continue;
+        const at = t => p.a + (p.b - p.a) * ((t - p.t0) / Math.max(1, p.t1 - p.t0));
+        const ta = cl(p.t0), tb = cl(p.t1), va = at(ta), vb = at(tb);
+        g.beginPath();
+        g.moveTo(X(ta), Y(va + tol(va))); g.lineTo(X(tb), Y(vb + tol(vb)));
+        g.lineTo(X(tb), Y(Math.max(ymin, vb - tol(vb)))); g.lineTo(X(ta), Y(Math.max(ymin, va - tol(va)))); g.closePath();
+        g.fillStyle = tok.sec + '1f'; g.fill();
+        g.beginPath(); g.moveTo(X(ta), Y(va)); g.lineTo(X(tb), Y(vb));
+        g.strokeStyle = tok.sec; g.lineWidth = 1.5; g.stroke();
+      }
+      g.restore();
     }
     if (!vals.length) {
       g.fillStyle = tok.muted; g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -559,7 +623,7 @@ function Chart({ c, hist, laps, ftp, win, version, hover, setHover }) {
         g.fillStyle = tok.col; g.fill(); g.lineWidth = 2; g.strokeStyle = tok.surf; g.stroke();
       }
     }
-  }, [version, W, H, x0, x1, ftp, laps, hover, hist, c]);
+  }, [version, W, H, x0, x1, ftp, laps, hover, hist, c, plan]);
 
   const onMove = e => {
     const r = cv.current.getBoundingClientRect(), x = e.clientX - r.left;
@@ -570,7 +634,8 @@ function Chart({ c, hist, laps, ftp, win, version, hover, setHover }) {
 
   return (
     <div className="chart">
-      <div className="title"><span className="key" style={{ background: `var(${c.color})` }} />{c.title}</div>
+      <div className="title"><span className="key" style={{ background: `var(${c.color})` }} />{c.title}
+        {plan.length > 0 && <span className="plan-key"><span className="key" />workout target (shaded = on target)</span>}</div>
       <canvas ref={cv} style={{ height: H }} onMouseMove={onMove} onMouseLeave={() => setHover(null, null)}
               role="img" aria-label={chartSummary(c, hist)} />
     </div>
@@ -603,7 +668,7 @@ function Tooltip({ s, pos, ftp, boxRef }) {
       <Row col="var(--power)" k="Power" v={`${s.power_w} W ${z}`} />
       <Row col="var(--cadence)" k="Cadence" v={`${s.cadence_rpm} rpm`} />
       <Row col="var(--hr)" k="Heart rate" v={nz(s.heart_rate_bpm) ? `${s.heart_rate_bpm} bpm` : '–'} />
-      <Row col="transparent" k="Speed" v={nz(s.speed_kmh) ? `${s.speed_kmh.toFixed(1)} km/h` : '–'} />
+      <Row col="var(--speed)" k="Speed" v={nz(s.speed_kmh) ? `${s.speed_kmh.toFixed(1)} km/h` : '–'} />
     </div>
   );
 }
@@ -677,85 +742,15 @@ function Laps({ hist, laps, ftp, recording }) {
   );
 }
 
-// ------------------------------------------------------------------ Strava
-// One-time: the keys of the rider's own Strava API app, saved by the logger in strava_config.json.
-function StravaSetup({ onDone }) {
-  const [cid, setCid] = useState('');
-  const [sec, setSec] = useState('');
-  const [err, setErr] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const save = e => {
-    e.preventDefault(); setBusy(true); setErr(null);
-    fetch('/strava/setup', { method: 'POST', body: new URLSearchParams({ client_id: cid, client_secret: sec }) })
-      .then(r => r.text().then(t => r.ok ? (setSec(''), onDone && onDone()) : setErr(t)))
-      .catch(() => setErr('The logger is not reachable.'))
-      .finally(() => setBusy(false));
-  };
-  return (
-    <form className="strava-setup" onSubmit={save}>
-      <p className="help">First time: create an app at <a href="https://www.strava.com/settings/api" target="_blank" rel="noreferrer">strava.com/settings/api</a> (any
-        name and website, <b>Authorization Callback Domain</b>: <code>localhost</code>), then copy its keys here.</p>
-      <label htmlFor="strava-id">Client ID</label>
-      <input id="strava-id" inputMode="numeric" autoComplete="off" value={cid} onChange={e => setCid(e.target.value)} required />
-      <label htmlFor="strava-secret">Client Secret</label>
-      <input id="strava-secret" type="password" autoComplete="off" value={sec} onChange={e => setSec(e.target.value)}
-             aria-invalid={!!err} aria-describedby="strava-err" required />
-      <div className="inline"><button className="primary" disabled={busy || !cid || !sec}>Save keys</button></div>
-      <p id="strava-err" className={'help' + (err ? ' err' : '')}>{err || 'Saved only on this computer, never uploaded.'}</p>
-    </form>
-  );
-}
-
-function StravaAccount({ strava }) {
-  const [armed, setArmed] = useArmed(strava.connected);
-  const [editKeys, setEditKeys] = useState(false);
-  if (!strava.connected && (!strava.configured || editKeys))
-    return <StravaSetup onDone={() => setEditKeys(false)} />;
-  if (!strava.connected)
-    return <>
-      <div className="inline"><a className="btn strava" href="/strava/connect">Connect to Strava</a></div>
-      <p className="help">Sign in on Strava once to allow uploads.{' '}
-        <button className="link" onClick={() => setEditKeys(true)}>Change app keys</button></p>
-    </>;
-  return <>
-    <div className="inline">
-      <span className="acct"><span className="dot" style={{ background: 'var(--strava)' }} />{strava.athlete || 'Connected'}</span>
-      <button className={armed ? 'danger' : ''} onClick={() => armed ? post('/strava/disconnect') : setArmed(true)}>
-        {armed ? 'Click again to disconnect' : 'Disconnect'}</button>
-    </div>
-    <p className="help">Finished rides upload to this account with one click.</p>
-  </>;
-}
-
-function StravaUpload({ strava }) {
-  const up = strava.upload || {};
-  const manual = <a className="btn" href="https://www.strava.com/upload/select" target="_blank" rel="noreferrer">
-    Upload manually</a>;
-  if (!strava.connected) return <a className="btn strava" href="/strava/connect">Connect to Strava</a>;
-  if (up.state === 'uploading') return <span className="note">Uploading to Strava…</span>;
-  if (up.state === 'done')
-    return <a className="btn strava" href={up.url} target="_blank" rel="noreferrer">View on Strava</a>;
-  return <>
-    <button className="strava" onClick={() => post('/strava/upload')}>
-      {up.state === 'error' ? 'Retry Strava upload' : 'Upload to Strava'}</button>
-    {up.state === 'error' && <span className="note err">Strava: {up.error}</span>}
-    {up.state === 'error' && manual}
-  </>;
-}
-
-function StravaNotice() {
-  const [msg, setMsg] = useState(() => new URLSearchParams(location.search).get('strava'));
-  useEffect(() => { if (msg) history.replaceState(null, '', '/'); }, []); // eslint-disable-line
-  if (!msg) return null;
-  const ok = msg === 'connected';
-  return <div className={'banner ' + (ok ? 'done' : 'err')} role="status">
-    {ok ? 'Connected to Strava. Finished rides can now be uploaded with one click.'
-        : `Strava connection failed (${msg.replace(/^error: /, '')}).`}
-    <button onClick={() => setMsg(null)}>OK</button></div>;
+// ------------------------------------------------------------------ Strava / Garmin: download the .FIT and open
+// the site's upload page in a new tab, ready to drag the file in (Strava's API needs a paid plan).
+function SendTo({ ride, href, label, className = '', onDownload }) {
+  return <a className={'btn ' + className} href="/ride.fit" download={ride.fit}
+            onClick={() => { onDownload(); window.open(href, '_blank', 'noopener'); }}>{label}</a>;
 }
 
 // ------------------------------------------------------------------ ride strip: one band, same height in every state
-function RideStrip({ ride, seconds, strava, startArmed, lapFlash, onDownload }) {
+function RideStrip({ ride, seconds, startArmed, lapFlash, onDownload }) {
   const dir = ride.dir ? `${ride.dir}/` : 'the ride folder';
   let cls = 'ready', body;
   if (ride.state === 'recording') {
@@ -770,10 +765,11 @@ function RideStrip({ ride, seconds, strava, startArmed, lapFlash, onDownload }) 
       <span className="what">Ride saved · {fmtT(seconds)}<small>{ride.fit} in {dir}</small></span>
       <span className="actions">
         <a className="btn primary" href="/ride.fit" download={ride.fit} onClick={onDownload}>Download .FIT</a>
-        <StravaUpload strava={strava} />
-        <a className="btn" href="https://connect.garmin.com/modern/import-data" target="_blank" rel="noreferrer">Garmin Connect import</a>
+        <SendTo ride={ride} className="strava" href="https://www.strava.com/upload/select" label="Send to Strava" onDownload={onDownload} />
+        <SendTo ride={ride} href="https://connect.garmin.com/modern/import-data" label="Send to Garmin Connect" onDownload={onDownload} />
       </span>
-      {startArmed && <span className="warn">This ride isn’t downloaded or uploaded yet. Starting again clears these buttons; the file stays in {dir}</span>}</>;
+      <span className="hint">Send to… downloads the .FIT and opens the upload page: drag the file in.</span>
+      {startArmed && <span className="warn">This ride isn’t downloaded yet. Starting again clears these buttons; the file stays in {dir}</span>}</>;
   } else if (ride.state === 'finished') {
     body = <span>Ride finished. Nothing was recorded.</span>;
   } else {
@@ -799,12 +795,13 @@ function App() {
   const rate = liveRate === 'saver' || (liveRate === 'auto' && touch) ? 2 : 0;
   const { hist, laps, status, online, version, preview, now, recent } = useLiveFeed(rate);
   const ride = status.ride || {};
-  const strava = status.strava || {};
   const mode = ride.state === 'recording' ? 'recording' : ride.state === 'finished' ? 'finished' : 'ready';
-  const [ftp, setFtp] = useStored('ftp', 200);
+  const [ftp, setFtp] = useStored('ftp', 200);    // FTP and weight stay in this browser
   const [kg, setKg] = useStored('kg', null);
   const [win, setWin] = useStored('win', 1200);
   const [more, setMore] = useStored('moreStats', false);
+  const [wo, setWo] = useStored('workout', null);
+  const [woSound, setWoSound] = useStored('workoutSound', true);
   const [downloaded, setDownloaded] = useStored('downloaded', null);   // .fit name last downloaded
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [devicesOpen, setDevicesOpen] = useState(false);
@@ -821,8 +818,8 @@ function App() {
 
   const st = useMemo(() => stats(hist, ftp, null), [version, ftp]); // eslint-disable-line
 
-  // the finished ride is "unsaved" until it was downloaded or uploaded from here
-  const unsaved = mode === 'finished' && ride.fit && downloaded !== ride.fit && (strava.upload || {}).state !== 'done';
+  // the finished ride is "unsaved" until its .FIT was downloaded from here
+  const unsaved = mode === 'finished' && ride.fit && downloaded !== ride.fit;
 
   useEffect(() => { if (mode === 'recording') { setSettingsOpen(false); setDevicesOpen(false); } }, [mode]);
   useEffect(() => {
@@ -861,18 +858,27 @@ function App() {
               toggleSettings={() => setSettingsOpen(o => !o)}
               devicesOpen={devicesOpen} toggleDevices={() => setDevicesOpen(o => !o)} />
       {devicesOpen && <Devices status={status} recording={mode === 'recording'} />}
-      {settingsOpen && <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} strava={strava} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
-                                 onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} />}
+      {settingsOpen && <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
+                                 onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} recording={mode === 'recording'}
+                                 workout={{ wo, setWo, sound: woSound, setSound: setWoSound }} />}
       {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
-      <StravaNotice />
-      <RideStrip ride={ride} seconds={hist.length} strava={strava} startArmed={startArmed} lapFlash={lapFlash}
+      <RideStrip ride={ride} seconds={hist.length} startArmed={startArmed} lapFlash={lapFlash}
                  onDownload={() => setDownloaded(ride.fit)} />
-      <Hero hist={hist} st={st} ftp={ftp} preview={mode === 'recording' ? null : preview} mode={mode}
+      {wo && mode !== 'finished' && (() => {
+        const fresh = now && Date.now() - now.at < FRESH_MS;
+        return <WorkoutBand wo={wo} t={hist.length} mode={mode} ftp={ftp} sound={woSound} onRemove={() => setWo(null)}
+                            power={fresh ? livePower(now, recent, 3) : hist.length ? avg3(hist) : null}
+                            cadence={fresh ? now.cadence_rpm : hist.length ? hist[hist.length - 1].cadence_rpm : null}
+                            hr={fresh ? now.heart_rate_bpm : hist.length ? hist[hist.length - 1].heart_rate_bpm : null}
+                            speed={fresh ? now.speed_kmh : hist.length ? hist[hist.length - 1].speed_kmh : null} />;
+      })()}
+      <Hero hist={hist} laps={laps} st={st} ftp={ftp} preview={mode === 'recording' ? null : preview} mode={mode}
             now={now} recent={recent} smooth={smooth} />
       <Stats hist={hist} st={st} ftp={ftp} kg={kg} more={more} setMore={setMore} mode={mode} />
       <section className="main">
-        <Charts hist={hist} laps={laps} ftp={ftp} win={win} setWin={setWin} version={version} />
+        <Charts hist={hist} laps={laps} ftp={ftp} win={win} setWin={setWin} version={version}
+                workout={wo} />
         <div className="side">
           <TimeInZone st={st} ftp={ftp} />
           <Laps hist={hist} laps={laps} ftp={ftp} recording={mode === 'recording'} />

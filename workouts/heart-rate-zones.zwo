@@ -1,0 +1,13 @@
+<workout_file>
+    <author>X2Max dashboard</author>
+    <name>Heart-rate test · Zone steps</name>
+    <description>18 min. Heart-rate targets in bpm (HeartRate is an X2Max-dashboard extra; Zwift ignores it). Ride by feel and hold the bpm. Change the numbers to fit your own zones.</description>
+    <sportType>bike</sportType>
+    <workout>
+        <FreeRide Duration="240" HeartRate="110"/>
+        <FreeRide Duration="300" HeartRate="130"/>
+        <FreeRide Duration="120" HeartRate="115"/>
+        <FreeRide Duration="240" HeartRate="145"/>
+        <FreeRide Duration="180" HeartRate="115"/>
+    </workout>
+</workout_file>
