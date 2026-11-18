@@ -14,6 +14,7 @@
   --good: #0ca30c;
   --warning: #fab219;
   --critical: #d03b3b;
+  --strava: #fc4c02;   /* Strava brand orange */
   /* power zones: ordinal blue ramp, Z1 dark -> Z7 light */
   --z1: #184f95; --z2: #1c5cab; --z3: #256abf; --z4: #2a78d6;
   --z5: #5598e7; --z6: #86b6ef; --z7: #b7d3f6;
@@ -35,6 +36,20 @@ button, select, input { font: inherit; font-size: 14px; color: var(--text-primar
         background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
         padding: 7px 12px; }
 button { cursor: pointer; }
+button.start { background: var(--good); border-color: var(--good); color: #fff; font-weight: 600; }
+button.danger { background: var(--critical); border-color: var(--critical); color: #fff; font-weight: 600; }
+.clock.rec::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+        background: var(--critical); margin-right: 10px; vertical-align: middle; animation: blink 1.6s infinite; }
+@keyframes blink { 50% { opacity: .25; } }
+.banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+        padding: 10px 14px; border-radius: 10px; background: var(--surface-1);
+        border: 1px solid var(--border); color: var(--text-secondary); font-size: 14px; }
+.banner.done { border-color: var(--good); color: var(--text-primary); }
+.banner code { word-break: break-all; }
+a.btn { font-size: 14px; color: var(--text-primary); background: var(--surface-2); text-decoration: none;
+        border: 1px solid var(--border); border-radius: 8px; padding: 7px 12px; }
+a.btn:hover { border-color: var(--text-muted); }
+a.btn.primary { background: var(--power); border-color: var(--power); color: #fff; font-weight: 600; }
 button:hover { border-color: var(--text-muted); }
 button.primary { background: var(--power); border-color: var(--power); color: #fff; font-weight: 600; }
 label.ftp { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary); }
@@ -101,3 +116,10 @@ tr.current td { color: var(--text-secondary); }
   .hero .value { font-size: 46px; } .hero .power .value { font-size: 60px; }
   .clock { font-size: 22px; }
 }
+
+button.strava, a.btn.strava { background: var(--strava); border-color: var(--strava); color: #fff; font-weight: 600; }
+.pill button.x { padding: 0 4px; margin-left: 2px; border: 0; background: none; color: var(--text-muted); font-size: 16px; line-height: 1; }
+.pill button.x:hover { color: var(--text-primary); }
+.banner.err { border-color: var(--critical); color: var(--text-primary); }
+.note { font-size: 13px; color: var(--text-secondary); }
+.note.err { color: var(--critical); }
