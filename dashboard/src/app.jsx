@@ -2,6 +2,8 @@
 //   GET  /events  Server-Sent Events: init, sample, preview, status, laps
 //   POST /lap     start a new lap
 //   POST /start, /finish   begin / end a recorded ride
+//   POST /devices/scan, /devices/use|off?role=trainer|hr   device panel
+//   POST /quit    stop the logger
 import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -111,17 +113,19 @@ const postLap = () => post('/lap');
 // ------------------------------------------------------------------ header
 const STATUS = {
   connected:    ['--good', s => `Trainer · ${s.device || 'connected'}`],
-  demo:         ['--power', () => 'Demo ride (simulated data)'],
-  searching:    ['--warning', () => 'Searching for trainer…'],
+  demo:         ['--power', s => `Demo · ${s.device || 'simulated data'}`],
+  searching:    ['--warning', s => s.device ? `Looking for ${s.device}…` : 'Searching for trainer…'],
   reconnecting: ['--warning', () => 'Trainer lost · reconnecting (timer paused)'],
   starting:     ['--warning', () => 'Starting…'],
+  off:          ['--text-muted', () => 'No trainer connected'],
 };
 
 // Separate heart-rate device (Garmin watch broadcasting HR, chest strap ...)
 const HR_STATUS = {
   connected:    ['--good', h => `HR · ${h.device || 'connected'}`],
-  searching:    ['--warning', () => 'HR · looking for watch or strap'],
+  searching:    ['--warning', h => h.device ? `HR · looking for ${h.device}` : 'HR · looking for watch or strap'],
   reconnecting: ['--warning', h => `HR · ${h.device || 'device'} lost, reconnecting`],
+  off:          ['--text-muted', () => 'HR · off'],
 };
 
 // A button that needs a second click within 4 s (Finish, Start over an unsaved ride, Disconnect).
@@ -134,7 +138,7 @@ function useArmed(resetKey) {
 
 const Kbd = ({ k }) => <kbd aria-hidden="true">{k}</kbd>;
 
-function Header({ status, ride, act, settingsOpen, toggleSettings }) {
+function Header({ status, ride, act, settingsOpen, toggleSettings, devicesOpen, toggleDevices }) {
   const recording = ride.state === 'recording';
   const [col, txt] = STATUS[status.state] || ['--text-muted', () => status.state || 'Connecting…'];
   const hr = status.hr || {};
@@ -142,10 +146,12 @@ function Header({ status, ride, act, settingsOpen, toggleSettings }) {
   return (
     <header>
       <h1>X2Max <span>Live training</span></h1>
-      <div className="pills">
+      <button className={'pills' + (devicesOpen ? ' on' : '')} onClick={toggleDevices}
+              aria-expanded={devicesOpen} aria-controls="devices" title="Choose the trainer and heart-rate device">
         <span className="pill"><span className="dot" style={{ background: `var(${col})` }} />{txt(status)}</span>
         {hrPill && <span className="pill"><span className="dot" style={{ background: `var(${hrPill[0]})` }} />{hrPill[1](hr)}</span>}
-      </div>
+        <span className="pills-act">Devices</span>
+      </button>
       <div className="controls">
         {recording ? <>
           <button className="primary" onClick={act.lap} aria-keyshortcuts="L">Lap <Kbd k="L" /></button>
@@ -200,11 +206,127 @@ function Settings({ ftp, setFtp, kg, setKg, strava, onCsv, canCsv }) {
         <div className="inline"><button onClick={onCsv} disabled={!canCsv}>Export CSV</button></div>
         <p className="help">The logger also writes a CSV and a .FIT file to its ride folder.</p>
       </div>
+      <div className="field">
+        <span className="flabel">Logger</span>
+        <StopLogger />
+      </div>
       <div className="field wide">
         <span className="flabel">Tips</span>
         <p className="help">Garmin watch heart rate: turn on <b>Broadcast Heart Rate</b> on the watch.
           Close Zwift and the ThinkRider app first: the trainer and the watch accept one connection at a time.
           <span className="keys"> Keys: <Kbd k="S" /> start, <Kbd k="L" /> lap, <Kbd k="F" /> twice to finish.</span></p>
+      </div>
+    </section>
+  );
+}
+
+function StopLogger() {
+  const [armed, setArmed] = useArmed();
+  return <>
+    <div className="inline"><button className={armed ? 'danger' : ''} onClick={() => armed ? post('/quit') : setArmed(true)}>
+      {armed ? 'Click again to stop' : 'Stop logger'}</button></div>
+    <p className="help">Saves a ride in progress, then closes the logger. Start it again with <b>Start X2Max</b>.</p>
+  </>;
+}
+
+// ------------------------------------------------------------------ devices (disclosure): pick trainer + HR source
+const ROLE = {
+  trainer: { title: 'Trainer', any: 'Any smart trainer',
+             tip: 'Pedal to wake the trainer. Close Zwift and the ThinkRider app first: it takes one connection at a time.' },
+  hr:      { title: 'Heart rate', any: 'Any heart-rate broadcast',
+             tip: <>On the Forerunner turn on <b>Broadcast Heart Rate</b> (hold UP › Settings › Sensors &amp; Accessories › Wrist Heart Rate).</> },
+};
+const KIND = { trainer: 'Smart trainer', hr: 'Heart-rate broadcast', other: 'Other device' };
+const useUrl = (role, d) => `/devices/use?role=${role}&address=${encodeURIComponent(d.address)}&name=${encodeURIComponent(d.name || '')}`;
+
+function Bars({ rssi }) {
+  const n = rssi == null ? 0 : rssi >= -65 ? 3 : rssi >= -80 ? 2 : 1;
+  const word = ['Unknown', 'Weak', 'Good', 'Strong'][n];
+  return <span className="bars" role="img" aria-label={`Signal ${word}`} title={rssi == null ? word : `${word} signal (${rssi} dBm)`}>
+    {[1, 2, 3].map(i => <i key={i} className={i <= n ? 'on' : ''} />)}</span>;
+}
+
+function slotInfo(role, status) {
+  const s = role === 'trainer' ? status : (status.hr || {});
+  const choice = (status.devices || {})[role] || { mode: 'auto' };
+  const name = s.device || choice.name || choice.address;
+  if (choice.mode === 'off' || s.state === 'off')
+    return { dot: '--text-muted', name: choice.name || 'None', text: 'Not connected. Pick a device below.', off: true };
+  if (s.state === 'connected' || s.state === 'demo')
+    return { dot: '--good', name, text: 'Connected. Reconnects by itself next time.', on: true };
+  if (s.state === 'reconnecting')
+    return { dot: '--warning', name: name || ROLE[role].any, text: 'Connection lost, reconnecting…' };
+  if (choice.mode === 'device') return { dot: '--warning', name, text: 'Looking for it…' };
+  return { dot: '--warning', name: ROLE[role].any, text: 'Looking… or pick one below.' };
+}
+
+function Slot({ role, status, recording }) {
+  const info = slotInfo(role, status);
+  const choice = (status.devices || {})[role] || {};
+  const confirm = role === 'trainer' && recording && info.on;      // dropping the trainer pauses the ride
+  const [armed, setArmed] = useArmed(info.text);
+  const off = () => confirm && !armed ? setArmed(true) : post(`/devices/off?role=${role}`);
+  return (
+    <div className="slot">
+      <span className="flabel">{ROLE[role].title}</span>
+      <div className="slot-dev"><span className="dot" style={{ background: `var(${info.dot})` }} /><b>{info.name}</b></div>
+      <p className="help">{info.text}</p>
+      <div className="inline">
+        {info.off ? (choice.address && <button onClick={() => post(useUrl(role, choice))}>Connect {choice.name || 'again'}</button>)
+          : <button className={armed ? 'danger' : ''} onClick={off}>{armed ? 'Click again (pauses the ride)' : 'Disconnect'}</button>}
+      </div>
+      {!info.on && <p className="help">{ROLE[role].tip}</p>}
+    </div>
+  );
+}
+
+function DeviceRow({ d, choice }) {
+  const inUse = ['trainer', 'hr'].find(r => (choice[r] || {}).mode !== 'off' && (choice[r] || {}).address === d.address);
+  const roles = d.kind === 'other' ? ['trainer', 'hr'] : [d.kind];
+  return (
+    <li>
+      <Bars rssi={d.rssi} />
+      <span className="dname">{d.name || 'Unnamed device'}<small>{KIND[d.kind]}</small></span>
+      <span className="dact">
+        {inUse ? <span className="badge done">{ROLE[inUse].title}</span>
+          : roles.map(r => <button key={r} className={d.kind === r ? 'primary' : ''} onClick={() => post(useUrl(r, d))}
+                                   aria-label={`Use ${d.name || 'this device'} for ${ROLE[r].title.toLowerCase()}`}>
+              {d.kind === 'other' ? `As ${ROLE[r].title.toLowerCase()}` : 'Connect'}</button>)}
+      </span>
+    </li>
+  );
+}
+
+function Devices({ status, recording }) {
+  const scan = status.scan || {};
+  const choice = status.devices || {};
+  const [showOther, setShowOther] = useState(false);
+  useEffect(() => { post('/devices/scan'); }, []);   // one short scan each time the panel opens
+  const scanning = scan.state === 'scanning';
+  const found = scan.found || [];
+  const main = found.filter(d => d.kind !== 'other'), other = found.filter(d => d.kind === 'other');
+  return (
+    <section className="devices" id="devices" aria-label="Devices">
+      <div className="slots">
+        <Slot role="trainer" status={status} recording={recording} />
+        <Slot role="hr" status={status} recording={recording} />
+      </div>
+      <div className="nearby">
+        <div className="head">
+          <h2>Nearby</h2>
+          <button onClick={() => post('/devices/scan')} disabled={scanning}>{scanning ? 'Scanning…' : 'Scan again'}</button>
+        </div>
+        <ul aria-busy={scanning}>
+          {main.map(d => <DeviceRow key={d.address} d={d} choice={choice} />)}
+          {showOther && other.map(d => <DeviceRow key={d.address} d={d} choice={choice} />)}
+        </ul>
+        {!main.length && <p className="empty">
+          {scanning ? 'Looking for trainers and heart-rate broadcasts…'
+            : scan.state === 'error' ? `Bluetooth scan failed: ${scan.error}`
+            : scan.state === 'done' ? 'No trainer or heart-rate broadcast found. Pedal to wake the trainer, check Broadcast Heart Rate on the watch, then scan again.'
+            : ''}</p>}
+        {other.length > 0 && <button className="quiet" onClick={() => setShowOther(o => !o)} aria-expanded={showOther}>
+          {showOther ? 'Hide other devices' : `Show other devices (${other.length})`}</button>}
       </div>
     </section>
   );
@@ -608,6 +730,14 @@ function App() {
   const [more, setMore] = useStored('moreStats', false);
   const [downloaded, setDownloaded] = useStored('downloaded', null);   // .fit name last downloaded
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  const devChoice = (status.devices || {}).trainer;
+  const askedDevices = useRef(false);
+  useEffect(() => {      // open the device panel once when no trainer is remembered yet (or it was turned off)
+    if (!devChoice || askedDevices.current) return;
+    askedDevices.current = true;
+    if (devChoice.mode !== 'device' && mode !== 'recording') setDevicesOpen(true);
+  }, [devChoice]); // eslint-disable-line
   const [finishArmed, setFinishArmed] = useArmed(ride.state);
   const [startArmed, setStartArmed] = useArmed(ride.state);
   const [lapFlash, setLapFlash] = useState(0);
@@ -617,7 +747,7 @@ function App() {
   // the finished ride is "unsaved" until it was downloaded or uploaded from here
   const unsaved = mode === 'finished' && ride.fit && downloaded !== ride.fit && (strava.upload || {}).state !== 'done';
 
-  useEffect(() => { if (mode === 'recording') setSettingsOpen(false); }, [mode]);
+  useEffect(() => { if (mode === 'recording') { setSettingsOpen(false); setDevicesOpen(false); } }, [mode]);
   useEffect(() => {
     if (mode !== 'recording' || laps.length < 2) return;
     setLapFlash(laps.length);
@@ -651,11 +781,13 @@ function App() {
   return (
     <div className="wrap">
       <Header status={status} ride={ride} act={act} settingsOpen={settingsOpen}
-              toggleSettings={() => setSettingsOpen(o => !o)} />
+              toggleSettings={() => setSettingsOpen(o => !o)}
+              devicesOpen={devicesOpen} toggleDevices={() => setDevicesOpen(o => !o)} />
+      {devicesOpen && <Devices status={status} recording={mode === 'recording'} />}
       {settingsOpen && <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} strava={strava}
                                  onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} />}
-      {!online && <div className="offline" role="alert">The dashboard lost contact with the script.
-        Is <code>thinkrider_logger.py</code> still running? Retrying…</div>}
+      {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
+        If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
       <StravaNotice />
       <RideStrip ride={ride} seconds={hist.length} strava={strava} startArmed={startArmed} lapFlash={lapFlash}
                  onDownload={() => setDownloaded(ride.fit)} />

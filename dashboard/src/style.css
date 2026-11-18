@@ -43,7 +43,12 @@ code { font-size: .92em; color: var(--text-secondary); }
 header { display: flex; align-items: center; gap: 12px 16px; flex-wrap: wrap; margin-bottom: 12px; }
 header h1 { font-size: 18px; font-weight: 650; margin: 0; }
 header h1 span { font-weight: 500; color: var(--text-secondary); margin-left: 4px; }
-.pills { display: flex; gap: 8px; flex-wrap: wrap; }
+.pills { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; background: none; border: 1px solid transparent;
+         border-radius: 999px; padding: 2px; min-height: var(--tap); cursor: pointer; text-align: left; white-space: normal; }
+.pills:hover { border-color: var(--border); }
+.pills.on { border-color: var(--text-muted); }
+.pills-act { font-size: 13px; color: var(--text-secondary); padding: 0 8px 0 2px; text-decoration: underline;
+             text-decoration-color: var(--text-muted); text-underline-offset: 3px; }
 .pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; min-height: 30px;
         border-radius: 999px; background: var(--surface-2); font-size: 13px;
         color: var(--text-secondary); border: 1px solid var(--border); }
@@ -85,6 +90,32 @@ input[aria-invalid=true] { border-color: var(--critical); }
 .help code { white-space: nowrap; }
 .help b { color: var(--text-secondary); font-weight: 600; }
 .acct { display: inline-flex; align-items: center; gap: 8px; color: var(--text-primary); }
+
+/* ---------------- devices disclosure: the two connections on the left, nearby devices on the right */
+.devices { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 16px 24px;
+           background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+           padding: 16px 18px; margin-bottom: 12px; }
+.devices .flabel { display: block; font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+.devices .inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; align-content: start; }
+.slot { min-width: 0; }
+.slot-dev { display: flex; align-items: center; gap: 8px; font-size: 16px; min-width: 0; }
+.slot-dev b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nearby { min-width: 0; }
+.nearby .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.nearby h2 { font-size: 14px; font-weight: 600; margin: 0; color: var(--text-secondary); }
+.nearby ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.nearby li { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--grid); min-width: 0; }
+.nearby .dname { display: flex; flex-direction: column; flex: 1; min-width: 0; font-size: 14px; font-weight: 600;
+                 overflow-wrap: anywhere; }
+.nearby .dname small { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+.nearby .dact { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.nearby .empty { padding: 10px 0 4px; margin: 0; }
+.nearby > button.quiet { margin-top: 6px; }
+.bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 14px; flex: none; }
+.bars i { width: 4px; border-radius: 1px; background: var(--border); }
+.bars i:nth-child(1) { height: 5px; } .bars i:nth-child(2) { height: 9px; } .bars i:nth-child(3) { height: 14px; }
+.bars i.on { background: var(--text-secondary); }
 
 /* ---------------- ride strip: same height in every state so Start never shifts the page */
 .strip { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; min-height: 56px; margin-bottom: 12px;
@@ -196,6 +227,7 @@ td .now { font-size: 11px; font-weight: 600; color: var(--rec-text); margin-left
   .main { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 820px) {
+  .devices { grid-template-columns: minmax(0, 1fr); }
   .hero { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
           grid-template-areas: "power power" "time cad" "speed hr"; }
   .hero .power .value { font-size: clamp(80px, 22vw, 120px); padding-top: 4px; }
@@ -208,6 +240,8 @@ td .now { font-size: 11px; font-weight: 600; color: var(--rec-text); margin-left
   header h1 span { display: none; }
   .controls { width: 100%; margin-left: 0; }
   .controls > button:not(.quiet) { flex: 1; }
+  .pills { width: 100%; }
+  .devices { padding: 12px; }
   .hero, .stats { gap: 8px; }
   .tile { padding: 12px; }
   .hero .value { font-size: 40px; }

@@ -247,7 +247,7 @@ __marimo__/
 
 # Claude Code per-developer settings
 .claude/settings.local.json
-=======
+
 # Node
 node_modules/
 
@@ -257,4 +257,7 @@ x2max_*/
 # Strava credentials and sign-in token (thinkrider_logger.py --strava-setup)
 strava_config.json
 strava_token.json
+
+# Trainer / heart-rate device picked on the dashboard (thinkrider_logger.py)
+devices.json
 

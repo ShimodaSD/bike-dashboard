@@ -8,12 +8,35 @@ smart trainer) and watch a live training dashboard in your browser.
 Needs [uv](https://docs.astral.sh/uv/). `uv run` creates the virtual environment and
 installs `bleak` from `pyproject.toml` / `uv.lock` on first use.
 
+**On macOS, no typing needed:** double-click **`Start X2Max.command`** in Finder. It starts
+the logger and opens the dashboard. A Terminal window shows the log; leave it open. To
+stop, use **Settings > Stop logger** or close that window (a ride in progress is saved
+either way). To also open the dashboard on your phone, edit the file and set
+`EXTRA_ARGS="--host 0.0.0.0"`. If Finder says it can't be opened, right-click it > Open once.
+
+## Pick your trainer and heart-rate device
+
+Click the status pills at the top of the dashboard (**Devices**). The panel shows what is
+connected and scans for nearby trainers and heart-rate broadcasts for a few seconds. Click
+**Connect** next to the X2Max and next to the Forerunner, **Disconnect** to drop one, or
+connect another device to switch. Other Bluetooth devices are under **Show other devices**.
+
+Your picks are saved in `devices.json` next to the script, and the logger connects to
+them by itself on the next start. On the very first start (nothing picked yet) it takes
+the first ThinkRider / FTMS trainer and the first heart-rate broadcast it finds, and the
+panel opens so you can change that. Disconnecting the trainer during a ride pauses the
+ride timer (the panel asks you to click twice). The logger only listens: it never writes
+to the trainer.
+
+Command line, if you prefer:
+
 ```bash
 uv run thinkrider_logger.py            # find the trainer, log + open the dashboard
 uv run thinkrider_logger.py --demo     # simulated ride, no trainer needed
 uv run thinkrider_logger.py --scan     # list nearby BLE devices
 uv run thinkrider_logger.py --host 0.0.0.0   # view from a phone/tablet on the same Wi-Fi
 uv run thinkrider_logger.py --hr-name forerunner   # pick the heart-rate watch/strap by name
+                                                   # (--address / --hr-address / --no-hr also work)
 uv run thinkrider_logger.py --strava-setup   # one-time: save your Strava API app keys
 ```
 
@@ -43,8 +66,8 @@ rate the trainer reports.
    firmware.
 2. Start the logger. It picks the first device that broadcasts heart rate, preferring
    Garmin / Forerunner names. The header shows `HR · <device>` once it's connected.
-3. If it picks the wrong device (e.g. a chest strap nearby), use `--hr-name forerunner`
-   or `--hr-address <address from --scan>`. `--no-hr` turns this off.
+3. If it picks the wrong device (e.g. a chest strap nearby), open **Devices** on the
+   dashboard and connect the Forerunner instead. It is remembered from then on.
 
 The watch accepts one Bluetooth heart-rate connection at a time, so close Zwift or other
 apps that might grab it.
@@ -90,5 +113,7 @@ pnpm build           # rewrites ../dashboard.html
 ```
 
 The script talks to the page over `GET /events` (Server-Sent Events: `init`,
-`sample`, `preview`, `status`, `laps`), `POST /start`, `/finish`, `/lap`,
-`GET /ride.fit` and the `/strava/...` routes.
+`sample`, `preview`, `status`, `laps`), `POST /start`, `/finish`, `/lap`, `/quit`,
+`POST /devices/scan`, `/devices/use?role=trainer|hr&address=..&name=..`,
+`/devices/off?role=..`, `GET /ride.fit` and the `/strava/...` routes. POSTs from other
+sites are refused.
