@@ -32,6 +32,29 @@ class LoggerTest(unittest.TestCase):
         self.assertEqual(tl.fit_crc(data), 0)       # CRC over file + its CRC is 0
 
 
+    def test_resume_after_finish(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            live = tl.Live(tmp)
+            live.status["connected"] = True
+            live.update({"power_w": 200, "cadence_rpm": 90, "speed_kmh": 30.0})
+            self.assertFalse(live.resume_ride())                 # nothing to resume yet
+            live.start_ride()
+            for _ in range(5):
+                live.tick()
+            fit = live.finish_ride()
+            self.assertTrue(fit and os.path.exists(fit))
+            self.assertTrue(live.resume_ride())
+            self.assertTrue(live.recording)
+            for _ in range(3):
+                live.tick()
+            self.assertEqual(live.finish_ride(), fit)            # same file, written again
+            self.assertEqual([s["t"] for s in live.history], list(range(8)))
+            with open(os.path.join(tmp, "session_1hz.csv")) as f:
+                self.assertEqual(len(f.read().strip().splitlines()), 9)   # header + 8 rows
+            live.clear()
+            self.assertFalse(live.resume_ride())                 # cleared: nothing to resume
+
+
 class FakeDev:
     def __init__(self, address, name):
         self.address, self.name = address, name
