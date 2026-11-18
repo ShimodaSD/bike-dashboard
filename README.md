@@ -103,6 +103,12 @@ after Finish it shows the ride's summary. Keys: `S` start, `L` lap, `F` twice to
 finish. FTP, weight, Strava account and CSV export are under **Settings**; FTP,
 weight and chart window are remembered in the browser.
 
+The big numbers update on every reading the trainer sends (a few times a second), within
+a few milliseconds; recording and the charts stay at one sample per second. **Settings >
+Power number** switches between instant power and a 3 s / 5 s average. **Live updates**
+is instant on a computer and capped at 2 updates a second on a phone or tablet to save
+its battery (change it there).
+
 It is a React app in `dashboard/`, compiled into the single self-contained
 `dashboard.html` (works offline, no CDN). The built file is committed, so you only
 need Node.js and [pnpm](https://pnpm.io/) if you change the dashboard:
@@ -114,7 +120,7 @@ pnpm build           # rewrites ../dashboard.html
 ```
 
 The script talks to the page over `GET /events` (Server-Sent Events: `init`,
-`sample`, `preview`, `status`, `laps`), `POST /start`, `/finish`, `/lap`, `/quit`, `/strava/setup`,
+`sample`, `preview`, `live`, `status`, `laps`; `/events?live=2` caps `live` at 2/s), `POST /start`, `/finish`, `/lap`, `/quit`, `/strava/setup`,
 `POST /devices/scan`, `/devices/use?role=trainer|hr&address=..&name=..`,
 `/devices/off?role=..`, `GET /ride.fit` and the `/strava/...` routes. POSTs from other
 sites are refused.
