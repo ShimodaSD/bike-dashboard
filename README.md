@@ -58,8 +58,9 @@ uv run logger/thinkrider_logger.py --hr-name forerunner   # pick the heart-rate 
 Close Zwift / the ThinkRider app first: the trainer usually allows only one Bluetooth connection.
 
 Press **Start** on the dashboard to begin recording and **Finish** to end the ride
-(click it twice, so a stray click can't end it). Before Start the dashboard shows live
-numbers but saves nothing. Use `--autostart` to record straight away.
+(press it twice, at least half a second apart, so a stray click or a double tap can't end
+it). Ended too soon? **Resume ride** on the finished screen carries on with the same ride and
+writes the .FIT again. Before Start the dashboard shows live numbers but saves nothing. Use `--autostart` to record straight away.
 
 Each run is saved to `rides/x2max_YYYYMMDD_HHMMSS/`: `ride_<date>_<time>.fit` (one per ride),
 `session_1hz.csv`, `decoded.csv`, `raw_packets.csv` and `gatt_dump.json`. Ctrl+C in the
@@ -101,7 +102,8 @@ Garmin: Import Data). There is no automatic upload: Strava's API needs a paid su
 (3 s), cadence, speed, heart rate, power zones, NP / IF / TSS, W/kg, laps and live
 power / cadence / HR / speed charts. While recording it shows a red REC strip and frame;
 after Finish it shows the ride's summary. Keys: `S` start, `L` lap, `F` twice to
-finish. FTP, weight, workout, CSV export and **Clear all data** are under **Settings**; FTP,
+finish, `Esc` closes Devices / Settings. FTP, weight, workout, CSV export and **Clear all
+data** (only between rides) are under **Settings**; FTP,
 weight and chart window are remembered in the browser.
 
 The big numbers update on every reading the trainer sends (a few times a second), within

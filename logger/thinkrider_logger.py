@@ -350,6 +350,7 @@ class Live:
         self.ride_start = None
         self.port = 8000
         self.fit_path = None
+        self.sess_path = None          # this ride's 1 Hz CSV (reopened by Resume)
         self.gatt_dumped = False
         self._live_pending = False     # a "live" push is already scheduled
         self.devices = None            # Devices: trainer / heart-rate choice (device panel)
@@ -369,7 +370,8 @@ class Live:
         self.ride_start = datetime.now()
         self.fit_path = None
         name = "session_1hz.csv" if n == 1 else f"session_1hz_{n}.csv"
-        self.sess_f = open(os.path.join(self.out_dir, name), "w", newline="")
+        self.sess_path = os.path.join(self.out_dir, name)
+        self.sess_f = open(self.sess_path, "w", newline="")
         self.sess_w = csv.DictWriter(self.sess_f, fieldnames=SESSION_FIELDS)
         self.sess_w.writeheader()
         self.status["ride"] = {**self.status["ride"], "state": "recording", "n": n, "fit": None}
@@ -392,6 +394,19 @@ class Live:
         self.broadcast("status", self.status)
         return self.fit_path
 
+    def resume_ride(self):
+        """Resume button: carry on with the ride that was just finished. Samples keep
+        their numbering (the time in between counts as a pause), the CSV is appended
+        to, and Finish writes the .FIT again under the same name."""
+        if self.recording or not self.history or not self.sess_path:
+            return False
+        self.sess_f = open(self.sess_path, "a", newline="")
+        self.sess_w = csv.DictWriter(self.sess_f, fieldnames=SESSION_FIELDS)
+        self.status["ride"] = {**self.status["ride"], "state": "recording", "fit": None}
+        print(f"Ride {self.status['ride']['n']} resumed")
+        self.broadcast("status", self.status)
+        return True
+
     def clear(self):
         """Clear button: empty the dashboard (ride so far, laps, totals) without
         saving a .FIT. Files already in the ride folder stay on disk."""
@@ -400,7 +415,7 @@ class Live:
             self.sess_f = self.sess_w = None
         self.history, self.laps = [], [0]
         self.distance_m = self.energy_kj = 0.0
-        self.ride_start = self.fit_path = None
+        self.ride_start = self.fit_path = self.sess_path = None
         self.status["ride"] = {**self.status["ride"], "state": "ready", "fit": None}
         print("Dashboard cleared")
         self.broadcast("init", {"history": [], "laps": self.laps, "status": self.status})
@@ -619,6 +634,10 @@ async def handle_http(reader, writer, live: Live):
         elif path in ("/start", "/finish") and method == "POST":
             live.start_ride() if path == "/start" else live.finish_ride()
             body, ctype, code = b"ok", "text/plain", "200 OK"
+        elif path == "/resume" and method == "POST":
+            ok = live.resume_ride()
+            body, ctype = (b"ok", "text/plain") if ok else (b"nothing to resume", "text/plain")
+            code = "200 OK" if ok else "409 Conflict"
         elif path == "/ride.fit":
             try:
                 if live.fit_path and not live.recording:     # the saved file

@@ -24,9 +24,10 @@
   --done-tint: #13230f;
   --done-text: #8fd78a;
   --focus: #7fb2f0;
-  /* power zones: ordinal blue ramp, Z1 dark -> Z7 light */
-  --z1: #184f95; --z2: #1c5cab; --z3: #256abf; --z4: #2a78d6;
-  --z5: #5598e7; --z6: #86b6ef; --z7: #b7d3f6;
+  /* power zones: one clearly different colour per zone (the grey -> blue -> green -> yellow ->
+     orange -> red -> purple order riders know), so a zone change reads at arm's length */
+  --z1: #8b9099; --z2: #3987e5; --z3: #2fae68; --z4: #e8bd2c;
+  --z5: #ee8a2a; --z6: #e5484d; --z7: #a970e6;
   --tap: 40px;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
@@ -53,6 +54,7 @@ header h1 span { font-weight: 500; color: var(--text-secondary); margin-left: 4p
 .pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; min-height: 30px;
         border-radius: 999px; background: var(--surface-2); font-size: 13px;
         color: var(--text-secondary); border: 1px solid var(--border); }
+.pill .short { display: none; }
 .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--text-muted); }
 .controls { display: flex; gap: 8px; align-items: center; margin-left: auto; }
 
@@ -70,19 +72,38 @@ button:disabled { opacity: .45; cursor: default; }
 button.primary, a.btn.primary { background: var(--action); border-color: var(--action); color: #fff; font-weight: 600; }
 button.start { background: var(--action-go); border-color: var(--action-go); color: #fff; font-weight: 600; }
 button.danger { background: var(--critical); border-color: var(--critical); color: #fff; font-weight: 600; }
+/* armed (press again to confirm): a bar drains over the 4 s the button stays armed */
+button.armed { position: relative; overflow: hidden; }
+button.armed::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 4px;
+                      background: rgba(255, 255, 255, .85); transform-origin: left; animation: arm-drain 4s linear forwards; }
+@keyframes arm-drain { to { transform: scaleX(0); } }
 button.strava, a.btn.strava { background: var(--strava); border-color: var(--strava); color: #111110; font-weight: 650; }
+/* a Download / Send button already used for this ride */
+a.btn.used { color: var(--done-text); border-color: #2c5a25; background: transparent; }
+.check { flex: none; }
 button.quiet { background: none; color: var(--text-secondary); }
 button.quiet.on { background: var(--surface-2); color: var(--text-primary); }
 header .controls button { min-width: 88px; }
+/* full-strength text (readable on the coloured buttons), only the outline is softened */
 kbd { font: 600 11px/1 system-ui, sans-serif; padding: 3px 5px; border-radius: 4px;
-      border: 1px solid currentColor; opacity: .7; }
+      border: 1px solid color-mix(in srgb, currentColor 50%, transparent); }
 @media (hover: none) { kbd { display: none; } }
 input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 input::placeholder { color: var(--text-muted); }
 input[aria-invalid=true] { border-color: var(--critical); }
 
-/* ---------------- settings disclosure */
+/* ---------------- drawer: Devices or Settings over the right edge, the page keeps its place */
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 60; width: min(520px, 100vw); overflow-y: auto;
+          overscroll-behavior: contain; background: var(--surface-1); border-left: 1px solid var(--border);
+          box-shadow: -16px 0 40px rgba(0, 0, 0, .5); padding: 14px 18px 24px; }
+.drawer:focus { outline: none; }
+.drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.drawer-head h2 { font-size: 16px; font-weight: 650; margin: 0; }
+.drawer .settings, .drawer .devices { grid-template-columns: minmax(0, 1fr); background: none; border: 0;
+                                      border-radius: 0; padding: 0; margin: 0; }
+
+/* ---------------- settings */
 .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px 24px;
             background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
             padding: 16px 18px; margin-bottom: 12px; }
@@ -135,6 +156,9 @@ input[aria-invalid=true] { border-color: var(--critical); }
 .strip .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
 .strip .flash { margin-left: auto; font-weight: 600; color: var(--text-primary); }
 .strip .hint { flex-basis: 100%; color: var(--text-secondary); font-size: 13px; }
+.strip .hint.next { color: var(--warning); }
+.strip .hint.next b { color: inherit; }
+.strip .resume { color: var(--text-primary); border-color: #2c5a25; }
 .strip .warn { flex-basis: 100%; color: var(--warning); font-size: 13px; }
 .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; letter-spacing: .06em;
          text-transform: uppercase; padding: 3px 8px; border-radius: 6px; color: var(--text-secondary);
@@ -174,7 +198,9 @@ input[aria-invalid=true] { border-color: var(--critical); }
 .hero > :nth-child(5) { grid-area: hr; }
 .hero .value { font-size: clamp(44px, 4.4vw, 64px); }
 .hero .power .value { font-size: clamp(96px, 10vw, 150px); margin-top: auto; padding-top: 12px; }
-.hero .power .sub { font-size: 16px; }
+.hero .power .sub { font-size: 16px; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; }
+.hero .power .zn { font-size: 34px; font-weight: 750; line-height: 1; letter-spacing: -.01em; }
+.hero .power.zoned .label, .hero .power.zoned .live-now { color: var(--text-secondary); }
 /* power tile tinted by the current zone (Z1 dark blue -> Z7 light blue) */
 .hero .power.zoned { border-color: var(--zc); background: color-mix(in srgb, var(--zc) 20%, var(--surface-1)); }
 .hero .power.zoned .zonebar span.on { box-shadow: 0 0 0 2px color-mix(in srgb, var(--zc) 20%, var(--surface-1)), 0 0 0 3px var(--text-primary); }
@@ -183,12 +209,12 @@ input[aria-invalid=true] { border-color: var(--critical); }
           border-top: 1px solid var(--border); font-size: 16px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .lapnow b { color: var(--text-primary); font-weight: 650; }
 .lapnow span:first-of-type { color: var(--text-primary); font-weight: 600; }
-.hero .power .live-now { color: var(--text-muted); font-weight: 400; }
+.hero .power .live-now { color: var(--text-muted); font-weight: 400; margin-left: auto; }
 .hero .time.recording { border-color: var(--critical); box-shadow: inset 0 0 0 1px var(--critical); }
 .hero .time.ready .value { color: var(--text-muted); }
 .hero.finished .power, .hero.finished .time { border-color: #2c5a25; }
 .zonebar { display: flex; gap: 3px; height: 14px; margin-top: 14px; align-items: end; }
-.zonebar span { flex: 1; height: 6px; border-radius: 2px; opacity: .22; }
+.zonebar span { flex: 1; height: 6px; border-radius: 2px; opacity: .35; }
 .zonebar span.on { height: 14px; opacity: 1; box-shadow: 0 0 0 2px var(--surface-1), 0 0 0 3px var(--text-primary); }
 
 /* stats: four that matter, the rest on request */
@@ -203,7 +229,7 @@ input[aria-invalid=true] { border-color: var(--critical); }
 .charts { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; position: relative; }
 .charts .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .charts .head h2, .side h2 { font-size: 14px; font-weight: 600; margin: 0; color: var(--text-secondary); }
-.charts .head select { min-height: 34px; }
+.charts .head select { min-height: var(--tap); }
 .chart { position: relative; margin-top: 8px; }
 .chart .title { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 7px; }
 .chart .title .key { width: 14px; height: 2px; border-radius: 2px; }
@@ -233,7 +259,7 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-nu
 th { text-align: right; color: var(--text-muted); font-weight: 500; padding: 4px 4px; border-bottom: 1px solid var(--border); }
 td { text-align: right; padding: 6px 4px; border-bottom: 1px solid var(--grid); color: var(--text-primary); }
 th:first-child, td:first-child { text-align: left; }
-tr.current td { color: var(--text-secondary); }
+tr.current td { color: var(--text-primary); font-weight: 600; }
 td .now { font-size: 11px; font-weight: 600; color: var(--rec-text); margin-left: 6px; }
 .laps { max-height: 280px; overflow: auto; }
 .empty { color: var(--text-muted); font-size: 13px; padding: 10px 0; }
@@ -253,20 +279,34 @@ td .now { font-size: 11px; font-weight: 600; color: var(--rec-text); margin-left
 }
 @media (max-width: 560px) {
   .wrap { padding: 10px 12px 24px; }
-  header { gap: 8px 10px; }
+  header { gap: 8px 10px; flex-wrap: nowrap; }
+  header h1 { flex: none; }
   header h1 span { display: none; }
+  /* status as two short pills on the title row */
+  .pill .long { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .pill .short { display: inline; }
+  .pill { padding: 4px 10px; min-height: 28px; }
+  .pills { flex-wrap: nowrap; gap: 6px; min-width: 0; }
   /* ride buttons pinned to the bottom of the screen so Lap / Finish never scroll away */
   .controls { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; margin: 0;
               padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
               background: var(--page); border-top: 1px solid var(--border); }
   .wrap { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
   .wo-pop { bottom: calc(84px + env(safe-area-inset-bottom)); }
-  .controls > button:not(.quiet) { flex: 1; }
-  .pills { width: 100%; }
+  /* Lap (or Start) wide on the left, Finish small on the far right, Settings between them,
+     so a hurried thumb on Lap never lands on Finish */
+  .controls > button.lap, .controls > button.start { flex: 1; }
+  .controls > .settings-btn { order: 2; }
+  .controls > button.finish { order: 3; margin-left: 8px; }
+  header .controls button.finish { min-width: 0; }
+  .drawer { top: auto; left: 0; right: 0; width: auto; bottom: calc(65px + env(safe-area-inset-bottom));
+            max-height: calc(100dvh - 140px); border-left: 0; border-top: 1px solid var(--border);
+            border-radius: 16px 16px 0 0; box-shadow: 0 -16px 40px rgba(0, 0, 0, .5); padding: 12px 14px 20px; }
   .devices { padding: 12px; }
   .hero, .stats { gap: 8px; }
   .tile { padding: 12px; }
-  .hero .value { font-size: 40px; }
+  .hero .value { font-size: 46px; }
+  .hero .power .zn { font-size: 30px; }
   .stats .value { font-size: 26px; }
   .tiz .r { grid-template-columns: minmax(0, 1fr) 56px 84px; }
   .charts .head select { min-height: var(--tap); }
@@ -279,7 +319,7 @@ td .now { font-size: 11px; font-weight: 600; color: var(--rec-text); margin-left
 .wo-head { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
 .wo-name { font-weight: 600; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .wo-meta { font-variant-numeric: tabular-nums; margin-left: auto; }
-.wo-head button { min-height: 28px; padding: 2px 8px; }
+.wo-head button { padding: 0 10px; }
 .wo-now { display: flex; align-items: baseline; gap: 6px 18px; flex-wrap: wrap; margin: 6px 0 8px; font-size: 15px; color: var(--text-secondary); }
 .wo-now b { color: var(--text-primary); }
 .wo-target { font-size: 28px; font-weight: 650; color: var(--text-primary); font-variant-numeric: tabular-nums; }

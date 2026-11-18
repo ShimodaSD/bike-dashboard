@@ -123,66 +123,107 @@ function useLiveFeed(rate) {
 }
 
 const post = path => fetch(path, { method: 'POST' }).catch(() => {});
+// Touch screens say "Tap", mice say "Click".
+const PRESS = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches ? 'Tap' : 'Click';
 const postLap = () => post('/lap');
 
 // ------------------------------------------------------------------ header
+// [dot colour, full label, short label for phones]
 const STATUS = {
-  connected:    ['--good', s => `Trainer · ${s.device || 'connected'}`],
-  demo:         ['--power', s => `Demo · ${s.device || 'simulated data'}`],
-  searching:    ['--warning', s => s.device ? `Looking for ${s.device}…` : 'Searching for trainer…'],
-  reconnecting: ['--warning', () => 'Trainer lost · reconnecting (timer paused)'],
-  starting:     ['--warning', () => 'Starting…'],
-  off:          ['--text-muted', () => 'No trainer connected'],
+  connected:    ['--good', s => `Trainer · ${s.device || 'connected'}`, 'Trainer'],
+  demo:         ['--power', s => s.device ? `Demo · ${s.device.replace(/\s*\(demo\)$/i, '')}` : 'Demo · simulated data', 'Demo'],
+  searching:    ['--warning', s => s.device ? `Looking for ${s.device}…` : 'Searching for trainer…', 'Searching…'],
+  reconnecting: ['--warning', () => 'Trainer lost · reconnecting (timer paused)', 'Trainer lost'],
+  starting:     ['--warning', () => 'Starting…', 'Starting…'],
+  off:          ['--text-muted', () => 'No trainer connected', 'No trainer'],
 };
 
 // Separate heart-rate device (Garmin watch broadcasting HR, chest strap ...)
 const HR_STATUS = {
-  connected:    ['--good', h => `HR · ${h.device || 'connected'}`],
-  searching:    ['--warning', h => h.device ? `HR · looking for ${h.device}` : 'HR · looking for watch or strap'],
-  reconnecting: ['--warning', h => `HR · ${h.device || 'device'} lost, reconnecting`],
-  off:          ['--text-muted', () => 'HR · off'],
+  connected:    ['--good', h => `HR · ${h.device || 'connected'}`, 'HR'],
+  searching:    ['--warning', h => h.device ? `HR · looking for ${h.device}` : 'HR · looking for watch or strap', 'HR…'],
+  reconnecting: ['--warning', h => `HR · ${h.device || 'device'} lost, reconnecting`, 'HR lost'],
+  off:          ['--text-muted', () => 'HR · off', 'HR off'],
 };
+const Pill = ({ col, long, short }) => (
+  <span className="pill"><span className="dot" style={{ background: `var(${col})` }} />
+    <span className="long">{long}</span><span className="short" aria-hidden="true">{short}</span></span>);
 
-// A button that needs a second click within 4 s (Finish, Start over an unsaved ride, Clear, Stop).
+// A button that needs a second press within 4 s (Finish, Start over an unsaved ride, Clear, Stop).
+// `press(action)` arms on the first press and runs `action` on the second. A second press that
+// lands within ARM_GUARD_MS of the first is a double tap, not a decision, so it is ignored.
+const ARM_MS = 4000, ARM_GUARD_MS = 500;
 function useArmed(resetKey) {
   const [armed, setArmed] = useState(false);
-  useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), 4000); return () => clearTimeout(t); }, [armed]);
+  const at = useRef(0);
+  useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), ARM_MS); return () => clearTimeout(t); }, [armed]);
   useEffect(() => setArmed(false), [resetKey]);
-  return [armed, setArmed];
+  const press = useCallback(action => {
+    if (!armed) { at.current = Date.now(); setArmed(true); return; }
+    if (Date.now() - at.current < ARM_GUARD_MS) return;
+    setArmed(false); action();
+  }, [armed]);
+  return [armed, press];
 }
+// Armed look: red fill plus a bar that drains over the 4 s, so the timeout is visible.
+const armedCls = (armed, base = '') => (armed ? `${base} danger armed`.trim() : base);
 
 const Kbd = ({ k }) => <kbd aria-hidden="true">{k}</kbd>;
 
-function Header({ status, ride, act, settingsOpen, toggleSettings, devicesOpen, toggleDevices }) {
+function Header({ status, ride, act, panel, toggle }) {
+  const settingsOpen = panel === 'settings', devicesOpen = panel === 'devices';
   const recording = ride.state === 'recording';
-  const [col, txt] = STATUS[status.state] || ['--text-muted', () => status.state || 'Connecting…'];
+  const [col, txt, short] = STATUS[status.state] || ['--text-muted', () => status.state || 'Connecting…', 'Connecting…'];
   const hr = status.hr || {};
   const hrPill = HR_STATUS[hr.state];
   return (
     <header>
       <h1>X2Max <span>Live training</span></h1>
-      <button className={'pills' + (devicesOpen ? ' on' : '')} onClick={toggleDevices}
+      <button className={'pills' + (devicesOpen ? ' on' : '')} onClick={() => toggle('devices')}
               aria-expanded={devicesOpen} aria-controls="devices" title="Choose the trainer and heart-rate device">
-        <span className="pill"><span className="dot" style={{ background: `var(${col})` }} />{txt(status)}</span>
-        {hrPill && <span className="pill"><span className="dot" style={{ background: `var(${hrPill[0]})` }} />{hrPill[1](hr)}</span>}
+        <Pill col={col} long={txt(status)} short={short} />
+        {hrPill && <Pill col={hrPill[0]} long={hrPill[1](hr)} short={hrPill[2]} />}
         <span className="pills-act">Devices</span>
       </button>
       <div className="controls">
         {recording ? <>
-          <button className="primary" onClick={act.lap} aria-keyshortcuts="L">Lap <Kbd k="L" /></button>
-          <button className={act.finishArmed ? 'danger' : ''} onClick={act.finish} aria-keyshortcuts="F">
-            {act.finishArmed ? 'Click again to finish' : <>Finish <Kbd k="F" /></>}</button>
-        </> : <button className={act.startArmed ? 'danger' : 'start'} onClick={act.start} aria-keyshortcuts="S">
-          {act.startArmed ? 'Click again to start' : <>{ride.state === 'finished' ? 'Start new ride' : 'Start'} <Kbd k="S" /></>}
+          <button className="primary lap" onClick={act.lap} aria-keyshortcuts="L">Lap <Kbd k="L" /></button>
+          <button className={armedCls(act.finishArmed, 'finish')} onClick={act.finish} aria-keyshortcuts="F">
+            {act.finishArmed ? `${PRESS} again to finish` : <>Finish <Kbd k="F" /></>}</button>
+        </> : <button className={armedCls(act.startArmed, 'start')} onClick={act.start} aria-keyshortcuts="S">
+          {act.startArmed ? `${PRESS} again to start` : <>{ride.state === 'finished' ? 'Start new ride' : 'Start'} <Kbd k="S" /></>}
         </button>}
-        <button className={'quiet' + (settingsOpen ? ' on' : '')} onClick={toggleSettings}
+        <button className={'quiet settings-btn' + (settingsOpen ? ' on' : '')} onClick={() => toggle('settings')}
                 aria-expanded={settingsOpen} aria-controls="settings">Settings</button>
       </div>
     </header>
   );
 }
 
-// ------------------------------------------------------------------ settings (disclosure, not a modal)
+// ------------------------------------------------------------------ drawer: Devices or Settings, one at a time
+// Floats over the page instead of pushing it down, so the live numbers never move mid-ride.
+// Not a modal: the page behind keeps updating and stays usable. Esc or Close puts focus back.
+function Drawer({ id, title, onClose, children }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const back = document.activeElement;
+    ref.current.focus();
+    const k = e => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', k);
+    return () => { document.removeEventListener('keydown', k); if (back && back.focus) back.focus(); };
+  }, []); // eslint-disable-line
+  return (
+    <aside className="drawer" id={id} aria-label={title} tabIndex={-1} ref={ref}>
+      <div className="drawer-head">
+        <h2>{title}</h2>
+        <button className="quiet" onClick={onClose}>Close <Kbd k="Esc" /></button>
+      </div>
+      {children}
+    </aside>
+  );
+}
+
+// ------------------------------------------------------------------ settings
 function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout }) {
   const [ftpDraft, setFtpDraft] = useState(String(ftp));
   const [ftpErr, setFtpErr] = useState(false);
@@ -202,7 +243,7 @@ function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, li
     else setKgErr(true);
   };
   return (
-    <section className="settings" id="settings" aria-label="Settings">
+    <section className="settings">
       <div className="field">
         <label htmlFor="ftp">FTP</label>
         <div className="inline">
@@ -273,21 +314,22 @@ function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, li
   );
 }
 
+// Clearing would throw away the ride in progress, so it waits until the ride is finished.
 function ClearData({ recording }) {
-  const [armed, setArmed] = useArmed();
+  const [armed, press] = useArmed(recording);
   return <>
-    <div className="inline"><button className={armed ? 'danger' : ''} onClick={() => armed ? (post('/clear'), setArmed(false)) : setArmed(true)}>
-      {armed ? 'Click again to clear' : 'Clear all data'}</button></div>
-    <p className="help">Empties the dashboard: ride, laps, totals and charts.
-      {recording ? ' The ride in progress stops and is not saved as .FIT.' : ''} Files already in the ride folder are kept.</p>
+    <div className="inline"><button className={armedCls(armed)} disabled={recording} onClick={() => press(() => post('/clear'))}>
+      {armed ? `${PRESS} again to clear` : 'Clear all data'}</button></div>
+    <p className="help">{recording ? 'Finish the ride first. Clearing during a ride would throw it away.'
+      : 'Empties the dashboard: ride, laps, totals and charts. Files already in the ride folder are kept.'}</p>
   </>;
 }
 
 function StopLogger() {
-  const [armed, setArmed] = useArmed();
+  const [armed, press] = useArmed();
   return <>
-    <div className="inline"><button className={armed ? 'danger' : ''} onClick={() => armed ? post('/quit') : setArmed(true)}>
-      {armed ? 'Click again to stop' : 'Stop logger'}</button></div>
+    <div className="inline"><button className={armedCls(armed)} onClick={() => press(() => post('/quit'))}>
+      {armed ? `${PRESS} again to stop` : 'Stop logger'}</button></div>
     <p className="help">Saves a ride in progress, then closes the logger. Start it again with <b>Start X2Max</b>.</p>
   </>;
 }
@@ -327,8 +369,8 @@ function Slot({ role, status, recording }) {
   const info = slotInfo(role, status);
   const choice = (status.devices || {})[role] || {};
   const confirm = role === 'trainer' && recording && info.on;      // dropping the trainer pauses the ride
-  const [armed, setArmed] = useArmed(info.text);
-  const off = () => confirm && !armed ? setArmed(true) : post(`/devices/off?role=${role}`);
+  const [armed, press] = useArmed(info.text);
+  const off = () => confirm ? press(() => post(`/devices/off?role=${role}`)) : post(`/devices/off?role=${role}`);
   return (
     <div className="slot">
       <span className="flabel">{ROLE[role].title}</span>
@@ -336,7 +378,7 @@ function Slot({ role, status, recording }) {
       <p className="help">{info.text}</p>
       <div className="inline">
         {info.off ? (choice.address && <button onClick={() => post(useUrl(role, choice))}>Connect {choice.name || 'again'}</button>)
-          : <button className={armed ? 'danger' : ''} onClick={off}>{armed ? 'Click again (pauses the ride)' : 'Disconnect'}</button>}
+          : <button className={armedCls(armed)} onClick={off}>{armed ? `${PRESS} again (pauses the ride)` : 'Disconnect'}</button>}
       </div>
       {!info.on && <p className="help">{ROLE[role].tip}</p>}
     </div>
@@ -369,7 +411,7 @@ function Devices({ status, recording }) {
   const found = scan.found || [];
   const main = found.filter(d => d.kind !== 'other'), other = found.filter(d => d.kind === 'other');
   return (
-    <section className="devices" id="devices" aria-label="Devices">
+    <section className="devices">
       <div className="slots">
         <Slot role="trainer" status={status} recording={recording} />
         <Slot role="hr" status={status} recording={recording} />
@@ -407,6 +449,16 @@ function Tile({ label, keyColor, value, unit, sub, className = '', badge, style,
   );
 }
 
+// Best average power over any `sec`-second stretch of the ride (null if the ride is shorter).
+function bestPower(h, sec) {
+  if (h.length < sec) return null;
+  let sum = 0, best = 0;
+  h.forEach((s, i) => { sum += s.power_w || 0; if (i >= sec) sum -= h[i - sec].power_w || 0; if (i >= sec - 1 && sum > best) best = sum; });
+  return best / sec;
+}
+const tssOf = (n, np, ftp) => (np ? ((n * np * (np / ftp)) / (ftp * 3600)) * 100 : null);
+const fmtTss = t => (t === null ? '–' : t < 10 ? t.toFixed(1) : Math.round(t));
+
 const avg3 = h => { const w = h.slice(-3); return w.length ? w.reduce((t, s) => t + (s.power_w || 0), 0) / w.length : null; };
 
 // Recording: live ride.  Ready: live preview (nothing saved).  Finished: the ride's summary.
@@ -425,17 +477,17 @@ function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth }) {
   const p = done ? st.avgP : fresh ? livePower(now, recent, smooth) : avg3(live);
   const zi = p > 0 ? zoneOf(p, ftp) : -1;
   const z = ZONES[zi];
-  const zoneTxt = p > 0 ? <><b>{z.n} {z.name}</b> · {Math.round((p / ftp) * 100)}% FTP</> : null;
+  const zoneTxt = p > 0 ? <><b className="zn">{z.n}</b><span className="zrest"><b>{z.name}</b> · {Math.round((p / ftp) * 100)}% FTP</span></> : null;
   // current lap at a glance: number, time and average power so far
   const lapStart = laps[laps.length - 1] || 0, lapRows = hist.slice(lapStart);
   const lapAvg = lapRows.length ? lapRows.reduce((t, s) => t + (s.power_w || 0), 0) / lapRows.length : null;
   const timeBadge = mode === 'recording' ? <span className="badge rec">REC</span>
-                  : mode === 'finished' ? <span className="badge done">Saved</span>
+                  : mode === 'finished' ? <span className="badge done">Finished</span>
                   : null;   // the strip above already says Preview
   return (
     <section className={'hero ' + mode}>
       <Tile className={'power' + (zi >= 0 ? ' zoned' : '')} style={zi >= 0 ? { '--zc': `var(--z${zi + 1})` } : undefined} label={done ? 'Avg power · ride' : smooth ? `Power · ${smooth} s` : 'Power'} keyColor="--power" value={r0(p)} unit="W"
-            sub={done ? <>{zoneTxt}{last ? <span className="live-now"> · now {r0(avg3(live))} W</span> : null}</>
+            sub={done ? <>{zoneTxt}{last ? <span className="live-now">now {r0(avg3(live))} W</span> : null}</>
                       : !last ? '' : p > 0 ? zoneTxt : 'Not pedaling'}>
         <div className="zonebar" aria-hidden="true">
           {ZONES.map((zz, i) => <span key={zz.n} className={i === zi ? 'on' : ''} style={{ background: `var(--z${i + 1})` }} />)}
@@ -466,21 +518,30 @@ function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth }) {
 function Stats({ hist, st, ftp, kg, more, setMore, mode }) {
   const done = mode === 'finished';
   const p3 = mode === 'recording' ? avg3(hist) || 0 : st.avgP || 0;
-  let IF = null, tss = null;
-  if (st.np) { IF = st.np / ftp; tss = ((hist.length * st.np * IF) / (ftp * 3600)) * 100; }
+  const IF = st.np ? st.np / ftp : null, tss = tssOf(hist.length, st.np, ftp);
+  const best = useMemo(() => {
+    if (!done) return null;
+    const sec = hist.length >= 1200 ? 1200 : hist.length >= 300 ? 300 : 60;
+    return { sec, p: bestPower(hist, sec) };
+  }, [done, hist.length]); // eslint-disable-line
+  const np = <Tile key="np" label="Normalized power" value={r0(st.np)} unit="W" sub={st.np ? '' : 'after 30 s'} />;
+  const avgP = <Tile key="avg" label="Avg power" value={r0(st.avgP)} unit="W" />;
+  const maxP = <Tile key="max" label="Max power" value={r0(st.maxP)} unit="W" />;
+  const dist = <Tile key="dist" label="Distance" value={(st.dist / 1000).toFixed(2)} unit="km" />;
+  // ~1 kJ of work ≈ 1 kcal burned (≈24 % gross efficiency), so one number covers both
+  const kj = <Tile key="kj" label="Energy" value={Math.round(st.kj)} unit="kJ" sub="≈ kcal burned" />;
+  const tssT = <Tile key="tss" label="TSS" value={fmtTss(tss)} sub="training stress" />;
+  const ifT = <Tile key="if" label="Intensity factor" value={IF ? IF.toFixed(2) : '–'} sub="NP ÷ FTP" />;
+  const wkg = <Tile key="wkg" label="W/kg" value={kg ? (p3 / kg).toFixed(2) : '–'} sub={kg ? `at ${kg} kg` : 'Set weight in Settings'} />;
+  const bestT = best && <Tile key="best" label={`Best ${best.sec / 60} min`} value={r0(best.p)} unit="W"
+                             sub={best.p ? `${Math.round((best.p / ftp) * 100)}% FTP` : 'ride too short'} />;
+  // riding: the running totals; finished: what the ride achieved first
+  const [first, rest] = done ? [[np, bestT, tssT, kj], [avgP, maxP, dist, ifT, wkg]]
+                             : [[np, avgP, dist, kj], [maxP, ifT, tssT, wkg]];
   return (
     <section className={'stats' + (more ? ' more' : '')}>
-      <Tile label="Normalized power" value={r0(st.np)} unit="W" sub={st.np ? '' : 'after 30 s'} />
-      {done ? <Tile label="Max power" value={r0(st.maxP)} unit="W" /> : <Tile label="Avg power" value={r0(st.avgP)} unit="W" />}
-      <Tile label="Distance" value={(st.dist / 1000).toFixed(2)} unit="km" />
-      {/* ~1 kJ of work ≈ 1 kcal burned (≈24 % gross efficiency), so one number covers both */}
-      <Tile label="Energy" value={Math.round(st.kj)} unit="kJ" sub="≈ kcal burned" />
-      {more && <>
-        {done ? <Tile label="Avg power" value={r0(st.avgP)} unit="W" /> : <Tile label="Max power" value={r0(st.maxP)} unit="W" />}
-        <Tile label="Intensity factor" value={IF ? IF.toFixed(2) : '–'} sub="NP ÷ FTP" />
-        <Tile label="TSS" value={tss === null ? '–' : tss < 10 ? tss.toFixed(1) : Math.round(tss)} sub="training stress" />
-        <Tile label="W/kg" value={kg ? (p3 / kg).toFixed(2) : '–'} sub={kg ? `at ${kg} kg` : 'Set weight in Settings'} />
-      </>}
+      {first}
+      {more && rest}
       <button className="quiet more-btn" onClick={() => setMore(!more)} aria-expanded={more}>
         {more ? 'Fewer stats' : 'More stats'}</button>
     </section>
@@ -744,13 +805,19 @@ function Laps({ hist, laps, ftp, recording }) {
 
 // ------------------------------------------------------------------ Strava / Garmin: download the .FIT and open
 // the site's upload page in a new tab, ready to drag the file in (Strava's API needs a paid plan).
-function SendTo({ ride, href, label, className = '', onDownload }) {
-  return <a className={'btn ' + className} href="/ride.fit" download={ride.fit}
-            onClick={() => { onDownload(); window.open(href, '_blank', 'noopener'); }}>{label}</a>;
+const Check = () => <svg className="check" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+  <path d="M2.5 7.5l3 3 6-7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+
+// Download / Send buttons. Once used for this ride they show a check and drop their fill,
+// so the finished screen tells you what you already did.
+function SendTo({ ride, href, label, className = '', used, onDownload }) {
+  return <a className={'btn ' + (used ? 'used' : className)} href="/ride.fit" download={ride.fit}
+            aria-label={used ? `${label} (done)` : undefined}
+            onClick={() => { onDownload(); if (href) window.open(href, '_blank', 'noopener'); }}>{used && <Check />}{label}</a>;
 }
 
 // ------------------------------------------------------------------ ride strip: one band, same height in every state
-function RideStrip({ ride, seconds, startArmed, lapFlash, onDownload }) {
+function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownload }) {
   const dir = ride.dir ? `${ride.dir}/` : 'the ride folder';
   let cls = 'ready', body;
   if (ride.state === 'recording') {
@@ -760,16 +827,22 @@ function RideStrip({ ride, seconds, startArmed, lapFlash, onDownload }) {
       {lapFlash ? <span className="flash">Lap {lapFlash} started</span> : null}</>;
   } else if (ride.state === 'finished' && ride.fit) {
     cls = 'done';
+    const used = sent.fit === ride.fit ? sent.to : [];
     body = <>
       <span className="badge done">Saved</span>
-      <span className="what">Ride saved · {fmtT(seconds)}<small>{ride.fit} in {dir}</small></span>
+      <span className="what">Saved on this computer · {fmtT(seconds)}<small>{ride.fit} in {dir}</small></span>
+      <button className="quiet resume" onClick={() => post('/resume')}>Resume ride</button>
       <span className="actions">
-        <a className="btn primary" href="/ride.fit" download={ride.fit} onClick={onDownload}>Download .FIT</a>
-        <SendTo ride={ride} className="strava" href="https://www.strava.com/upload/select" label="Send to Strava" onDownload={onDownload} />
-        <SendTo ride={ride} href="https://connect.garmin.com/modern/import-data" label="Send to Garmin Connect" onDownload={onDownload} />
+        <SendTo ride={ride} className="primary" label="Download .FIT" used={used.includes('file')} onDownload={() => onDownload('file')} />
+        <SendTo ride={ride} className="strava" href="https://www.strava.com/upload/select" label="Send to Strava"
+                used={used.includes('strava')} onDownload={() => onDownload('strava', 'file')} />
+        <SendTo ride={ride} href="https://connect.garmin.com/modern/import-data" label="Send to Garmin Connect"
+                used={used.includes('garmin')} onDownload={() => onDownload('garmin', 'file')} />
       </span>
-      <span className="hint">Send to… downloads the .FIT and opens the upload page: drag the file in.</span>
-      {startArmed && <span className="warn">This ride isn’t downloaded yet. Starting again clears these buttons; the file stays in {dir}</span>}</>;
+      <span className={'hint' + (used.length ? '' : ' next')}>{used.length
+        ? <>Downloaded {ride.fit}. Drag it into the upload page to finish.</>
+        : <>Not on Strava or Garmin yet. <b>Send to…</b> downloads the .FIT and opens the upload page: drag the file in.</>}</span>
+      {startArmed && <span className="warn">Starting again clears these buttons. The file stays in {dir}</span>}</>;
   } else if (ride.state === 'finished') {
     body = <span>Ride finished. Nothing was recorded.</span>;
   } else {
@@ -802,26 +875,33 @@ function App() {
   const [more, setMore] = useStored('moreStats', false);
   const [wo, setWo] = useStored('workout', null);
   const [woSound, setWoSound] = useStored('workoutSound', true);
-  const [downloaded, setDownloaded] = useStored('downloaded', null);   // .fit name last downloaded
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [devicesOpen, setDevicesOpen] = useState(false);
+  const [sent, setSent] = useStored('sent', { fit: null, to: [] });   // which buttons were used for which .fit
+  const [panel, setPanel] = useState(null);           // 'devices' | 'settings' | null
+  const toggle = p => setPanel(o => (o === p ? null : p));
   const devChoice = (status.devices || {}).trainer;
   const askedDevices = useRef(false);
   useEffect(() => {      // open the device panel once when no trainer is remembered yet (or it was turned off)
     if (!devChoice || askedDevices.current) return;
     askedDevices.current = true;
-    if (devChoice.mode !== 'device' && mode !== 'recording') setDevicesOpen(true);
+    if (devChoice.mode !== 'device' && mode !== 'recording') setPanel('devices');
   }, [devChoice]); // eslint-disable-line
-  const [finishArmed, setFinishArmed] = useArmed(ride.state);
-  const [startArmed, setStartArmed] = useArmed(ride.state);
+  const [finishArmed, pressFinish] = useArmed(ride.state);
+  const [startArmed, pressStart] = useArmed(ride.state);
   const [lapFlash, setLapFlash] = useState(0);
 
   const st = useMemo(() => stats(hist, ftp, null), [version, ftp]); // eslint-disable-line
 
   // the finished ride is "unsaved" until its .FIT was downloaded from here
-  const unsaved = mode === 'finished' && ride.fit && downloaded !== ride.fit;
+  const unsaved = mode === 'finished' && ride.fit && !(sent && sent.fit === ride.fit && sent.to.length);
+  // Send to… also downloads the file, so it marks Download .FIT as done too
+  const markSent = (...to) => setSent(s => ({ fit: ride.fit, to: [...new Set([...(s && s.fit === ride.fit ? s.to : []), ...to])] }));
 
-  useEffect(() => { if (mode === 'recording') { setSettingsOpen(false); setDevicesOpen(false); } }, [mode]);
+  useEffect(() => { if (mode === 'recording') setPanel(null); }, [mode]);
+  const prevMode = useRef(mode);
+  useEffect(() => {
+    if (prevMode.current === 'recording' && mode === 'finished') window.scrollTo({ top: 0 });
+    prevMode.current = mode;
+  }, [mode]);
   useEffect(() => {
     if (mode !== 'recording' || laps.length < 2) return;
     setLapFlash(laps.length);
@@ -832,8 +912,8 @@ function App() {
   const act = {
     finishArmed, startArmed,
     lap: postLap,
-    finish: () => finishArmed ? post('/finish') : setFinishArmed(true),
-    start: () => unsaved && !startArmed ? setStartArmed(true) : post('/start'),
+    finish: () => pressFinish(() => post('/finish')),
+    start: () => unsaved ? pressStart(() => post('/start')) : post('/start'),
   };
   const actRef = useRef(act); actRef.current = act;
   const modeRef = useRef(mode); modeRef.current = mode;
@@ -854,17 +934,16 @@ function App() {
 
   return (
     <div className="wrap">
-      <Header status={status} ride={ride} act={act} settingsOpen={settingsOpen}
-              toggleSettings={() => setSettingsOpen(o => !o)}
-              devicesOpen={devicesOpen} toggleDevices={() => setDevicesOpen(o => !o)} />
-      {devicesOpen && <Devices status={status} recording={mode === 'recording'} />}
-      {settingsOpen && <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
+      <Header status={status} ride={ride} act={act} panel={panel} toggle={toggle} />
+      {panel === 'devices' && <Drawer id="devices" title="Devices" onClose={() => setPanel(null)}>
+        <Devices status={status} recording={mode === 'recording'} /></Drawer>}
+      {panel === 'settings' && <Drawer id="settings" title="Settings" onClose={() => setPanel(null)}><Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
                                  onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} recording={mode === 'recording'}
-                                 workout={{ wo, setWo, sound: woSound, setSound: setWoSound }} />}
+                                 workout={{ wo, setWo, sound: woSound, setSound: setWoSound }} /></Drawer>}
       {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
       <RideStrip ride={ride} seconds={hist.length} startArmed={startArmed} lapFlash={lapFlash}
-                 onDownload={() => setDownloaded(ride.fit)} />
+                 sent={sent || { to: [] }} onDownload={markSent} />
       {wo && mode !== 'finished' && (() => {
         const fresh = now && Date.now() - now.at < FRESH_MS;
         return <WorkoutBand wo={wo} t={hist.length} mode={mode} ftp={ftp} sound={woSound} onRemove={() => setWo(null)}
