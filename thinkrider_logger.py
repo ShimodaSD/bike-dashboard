@@ -58,6 +58,7 @@ import glob
 import random
 import secrets
 import signal
+import socket
 import struct
 import sys
 import time
@@ -354,6 +355,7 @@ class Live:
         self.port = 8000
         self.fit_path = None
         self.gatt_dumped = False
+        self._live_pending = False     # a "live" push is already scheduled
         self.devices = None            # Devices: trainer / heart-rate choice (device panel)
         self.quit = None               # stops the logger (Stop button, closed launcher window)
 
@@ -405,11 +407,39 @@ class Live:
             if v is None or (k == "heart_rate_bpm" and v <= 0):
                 continue                     # FTMS sends HR 0 when no strap is paired
             self.vals[k] = (v, now)
+        self._push_live()
 
     def update_hr(self, bpm):
         """Heart rate from a dedicated HR device (watch / strap): beats trainer HR."""
         if bpm and bpm > 0:
             self.vals["hr_device"] = (bpm, time.monotonic())
+            self._push_live()
+
+    # -- instant values for the dashboard (every packet; recording stays 1 Hz) --
+    def now(self):
+        spd = self._get("speed_kmh", 3)
+        hr = self._get("hr_device", 5)
+        if hr is None:
+            hr = self._get("heart_rate_bpm", 10)
+        return {"power_w": round(self._get("power_w", 3) or 0),
+                "cadence_rpm": round(self._get("cadence_rpm", 3) or 0),
+                "speed_kmh": (0 if "speed_kmh" in self.vals else None) if spd is None else round(spd, 2),
+                "heart_rate_bpm": None if hr is None else round(hr)}
+
+    def _push_live(self):
+        """Send the new numbers right away. Packets that arrive together (power and
+        cadence often come from two characteristics a few ms apart) share one push."""
+        if self._live_pending or not self.clients:
+            return
+        try:
+            asyncio.get_running_loop().call_later(0.005, self._send_live)
+            self._live_pending = True
+        except RuntimeError:
+            pass                                    # not in the event loop (tests)
+
+    def _send_live(self):
+        self._live_pending = False
+        self.broadcast("live", self.now())
 
     def _get(self, k, max_age):
         v = self.vals.get(k)
@@ -434,6 +464,8 @@ class Live:
     def tick(self):
         if not self.status.get("connected"):
             return                                  # paused while disconnected
+        if self.clients:
+            self._send_live()                       # also clears stale numbers if packets stop
         power = self._get("power_w", 3) or 0
         cad = self._get("cadence_rpm", 3) or 0
         spd = self._get("speed_kmh", 3)
@@ -469,7 +501,12 @@ class Live:
     # -- push to browsers --------------------------------------------------
     def broadcast(self, event, data):
         msg = f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
+        now = time.monotonic()
         for q in list(self.clients):
+            if event == "live" and getattr(q, "live_gap", 0):
+                if now - q.live_last < q.live_gap - 0.05:
+                    continue                        # this tab asked for fewer updates
+                q.live_last = now
             try:
                 q.put_nowait(msg)
             except asyncio.QueueFull:
@@ -516,15 +553,32 @@ async def handle_http(reader, writer, live: Live):
             await writer.drain()
             return
         params = dict(urllib.parse.parse_qsl(query))
+        form = {}
+        if method == "POST":
+            n = int(headers.get("content-length") or 0)
+            if 0 < n <= 4096:            # small form posts only (Strava setup)
+                form = dict(urllib.parse.parse_qsl((await reader.readexactly(n)).decode("utf-8", "replace")))
         strava = live.strava
 
         if path == "/events":
             writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
                          b"Cache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n")
             init = {"history": live.history, "laps": live.laps, "status": live.status}
+            sock = writer.get_extra_info("socket")
+            if sock is not None:                    # send each event at once (no Nagle delay)
+                try:
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                except OSError:
+                    pass
             writer.write(f"event: init\ndata: {json.dumps(init)}\n\n".encode())
             await writer.drain()
             q = asyncio.Queue(maxsize=600)
+            # /events?live=2 : at most 2 instant updates per second (phone: saves battery)
+            try:
+                q.live_gap = 1 / max(0.5, float(params.get("live", 0))) if params.get("live") else 0
+            except ValueError:
+                q.live_gap = 0
+            q.live_last = 0.0
             live.clients.add(q)
             while True:
                 try:
@@ -543,9 +597,9 @@ async def handle_http(reader, writer, live: Live):
                 code, extra = "302 Found", f"Location: {strava.authorize_url(live.port)}\r\n"
                 body, ctype = b"", "text/plain"
             else:
-                body, ctype, code = (b"Strava is not set up yet. In a terminal run:\n\n"
-                                     b"  uv run thinkrider_logger.py --strava-setup\n\n"
-                                     b"then come back and click Connect to Strava again."), "text/plain", "200 OK"
+                body, ctype, code = (b"Strava is not set up yet. Open Settings on the dashboard,\n"
+                                     b"enter your Strava app's Client ID and Client Secret, then\n"
+                                     b"click Connect to Strava again."), "text/plain", "200 OK"
         elif path == "/strava/callback":
             msg = "connected"
             if params.get("state") != strava.state:
@@ -561,6 +615,13 @@ async def handle_http(reader, writer, live: Live):
             strava.push()
             code, body, ctype = "302 Found", b"", "text/plain"
             extra = f"Location: /?strava={urllib.parse.quote(msg)}\r\n"
+        elif path == "/strava/setup" and method == "POST":
+            err = save_strava_app(form.get("client_id", ""), form.get("client_secret", ""))
+            if not err:
+                print("Strava app keys saved from the dashboard")
+            strava.push()
+            body, ctype = (err or "ok").encode(), "text/plain"
+            code = "400 Bad Request" if err else "200 OK"
         elif path == "/strava/disconnect" and method == "POST":
             strava.disconnect(); strava.push()
             body, ctype, code = b"ok", "text/plain", "200 OK"
@@ -1126,6 +1187,16 @@ class Strava:
         self.push()
 
 
+def save_strava_app(cid, sec):
+    """Save the Strava API app keys (dashboard Settings or --strava-setup).
+    Returns an error message, or None when saved."""
+    cid, sec = cid.strip(), sec.strip()
+    if not cid.isdigit() or not (20 <= len(sec) <= 100) or not sec.isalnum():
+        return "That doesn't look right: the Client ID is a number, the Client Secret about 40 letters and digits."
+    _write_private(STRAVA_CONFIG, {"client_id": cid, "client_secret": sec})
+    return None
+
+
 def strava_setup():
     import getpass
     print("Strava setup\n"
@@ -1135,9 +1206,9 @@ def strava_setup():
           f"   {STRAVA_CONFIG} (never committed).\n")
     cid = input("Client ID: ").strip()
     sec = getpass.getpass("Client Secret (hidden): ").strip()
-    if not cid.isdigit() or len(sec) < 20:
-        sys.exit("That doesn't look right (the ID is a number, the secret ~40 characters).")
-    _write_private(STRAVA_CONFIG, {"client_id": cid, "client_secret": sec})
+    err = save_strava_app(cid, sec)
+    if err:
+        sys.exit(err)
     print("Saved. Start the logger and click 'Connect to Strava' on the dashboard.")
 
 
@@ -1441,12 +1512,12 @@ async def demo_trainer(live: Live, devices: Devices):
         else:
             c = (t - 300) % 420
             target = 285 if c < 240 else 155               # 4 min on / 3 min easy
-        p = max(0.0, random.gauss(target, 9))
+        p = max(0.0, random.gauss(target, 14))
         cad = random.gauss(93 if target > 250 else 86, 2)
         spd = 3.6 * (p / 0.32) ** (1 / 3) if p > 0 else 0  # rough flat-road speed
         live.update({"power_w": p, "cadence_rpm": cad, "speed_kmh": spd})
-        t += 1
-        await asyncio.sleep(1)
+        t += 0.25
+        await asyncio.sleep(0.25)                          # trainers send ~4 readings a second
 
 
 async def demo_hr(live: Live, devices: Devices):

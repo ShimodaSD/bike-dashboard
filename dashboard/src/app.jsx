@@ -1,5 +1,6 @@
 // X2Max live dashboard (React). Talks to thinkrider_logger.py:
-//   GET  /events  Server-Sent Events: init, sample, preview, status, laps
+//   GET  /events  Server-Sent Events: init, sample, preview, status, laps,
+//                 live (instant numbers on every trainer packet; ?live=2 caps it at 2/s)
 //   POST /lap     start a new lap
 //   POST /start, /finish   begin / end a recorded ride
 //   POST /devices/scan, /devices/use|off?role=trainer|hr   device panel
@@ -73,7 +74,12 @@ function stats(a, ftp, before) {
 
 // ------------------------------------------------------------------ live feed (SSE)
 // History lives in a ref (it can be hours long) and `version` bumps on each change.
-function useLiveFeed() {
+// Instant numbers older than this are ignored (trainer stopped sending).
+const FRESH_MS = 2500;
+
+function useLiveFeed(rate) {
+  const [now, setNow] = useState(null);           // instant numbers, every packet
+  const recent = useRef([]);                       // last few seconds of them, for 3 s / 5 s power
   const hist = useRef([]);
   const [laps, setLaps] = useState([0]);
   const [status, setStatus] = useState({});
@@ -84,7 +90,13 @@ function useLiveFeed() {
   useEffect(() => {
     let es, closed = false;
     const open = () => {
-      es = new EventSource('/events');
+      es = new EventSource(rate ? `/events?live=${rate}` : '/events');
+      es.addEventListener('live', e => {
+        const v = JSON.parse(e.data), at = Date.now(), r = recent.current;
+        r.push({ at, p: v.power_w });
+        while (r.length && at - r[0].at > 6000) r.shift();
+        setNow({ ...v, at });
+      });
       es.addEventListener('init', e => {
         const d = JSON.parse(e.data);
         hist.current = d.history; setLaps(d.laps); setStatus(d.status);
@@ -102,9 +114,9 @@ function useLiveFeed() {
     };
     open();
     return () => { closed = true; es.close(); };
-  }, []);
+  }, [rate]);
 
-  return { hist: hist.current, laps, status, online, version, preview };
+  return { hist: hist.current, laps, status, online, version, preview, now, recent: recent.current };
 }
 
 const post = path => fetch(path, { method: 'POST' }).catch(() => {});
@@ -168,7 +180,7 @@ function Header({ status, ride, act, settingsOpen, toggleSettings, devicesOpen, 
 }
 
 // ------------------------------------------------------------------ settings (disclosure, not a modal)
-function Settings({ ftp, setFtp, kg, setKg, strava, onCsv, canCsv }) {
+function Settings({ ftp, setFtp, kg, setKg, strava, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate }) {
   const [ftpDraft, setFtpDraft] = useState(String(ftp));
   const [ftpErr, setFtpErr] = useState(false);
   useEffect(() => setFtpDraft(String(ftp)), [ftp]);
@@ -196,6 +208,28 @@ function Settings({ ftp, setFtp, kg, setKg, strava, onCsv, canCsv }) {
                  onChange={e => { const v = +e.target.value; setKg(v >= 30 && v <= 200 ? v : null); }} /> kg
         </div>
         <p className="help">Used for W/kg. Stays in this browser.</p>
+      </div>
+      <div className="field">
+        <label htmlFor="smooth">Power number</label>
+        <div className="inline">
+          <select id="smooth" value={smooth} onChange={e => setSmooth(+e.target.value)}>
+            <option value={0}>Instant</option>
+            <option value={3}>3 s average</option>
+            <option value={5}>5 s average</option>
+          </select>
+        </div>
+        <p className="help">Instant shows each reading from the trainer. Averages are steadier.</p>
+      </div>
+      <div className="field">
+        <label htmlFor="liverate">Live updates</label>
+        <div className="inline">
+          <select id="liverate" value={liveRate} onChange={e => setLiveRate(e.target.value)}>
+            <option value="auto">Automatic</option>
+            <option value="fast">Instant</option>
+            <option value="saver">Battery saver (2 per second)</option>
+          </select>
+        </div>
+        <p className="help">Automatic is instant on a computer and battery saver on a phone or tablet.</p>
       </div>
       <div className="field">
         <span className="flabel">Strava</span>
@@ -347,11 +381,19 @@ function Tile({ label, keyColor, value, unit, sub, className = '', badge, childr
 const avg3 = h => { const w = h.slice(-3); return w.length ? w.reduce((t, s) => t + (s.power_w || 0), 0) / w.length : null; };
 
 // Recording: live ride.  Ready: live preview (nothing saved).  Finished: the ride's summary.
-function Hero({ hist, st, ftp, preview, mode }) {
+// Power shown live: the latest packet (instant) or the mean of the last `smooth` seconds of packets.
+function livePower(now, recent, smooth) {
+  if (!smooth) return now.power_w;
+  const w = recent.filter(x => now.at - x.at < smooth * 1000);
+  return w.length ? w.reduce((t, x) => t + x.p, 0) / w.length : now.power_w;
+}
+
+function Hero({ hist, st, ftp, preview, mode, now, recent, smooth }) {
   const done = mode === 'finished' && hist.length > 0;
-  const live = mode === 'recording' ? hist : preview ? [preview] : [];
+  const fresh = now && Date.now() - now.at < FRESH_MS;
+  const live = fresh ? [now] : mode === 'recording' ? hist : preview ? [preview] : [];
   const last = live[live.length - 1];
-  const p = done ? st.avgP : avg3(live);
+  const p = done ? st.avgP : fresh ? livePower(now, recent, smooth) : avg3(live);
   const zi = p > 0 ? zoneOf(p, ftp) : -1;
   const z = ZONES[zi];
   const zoneTxt = p > 0 ? <><b>{z.n} {z.name}</b> · {Math.round((p / ftp) * 100)}% FTP</> : null;
@@ -360,7 +402,7 @@ function Hero({ hist, st, ftp, preview, mode }) {
                   : null;   // the strip above already says Preview
   return (
     <section className={'hero ' + mode}>
-      <Tile className="power" label={done ? 'Avg power · ride' : 'Power · 3 s'} keyColor="--power" value={r0(p)} unit="W"
+      <Tile className="power" label={done ? 'Avg power · ride' : smooth ? `Power · ${smooth} s` : 'Power'} keyColor="--power" value={r0(p)} unit="W"
             sub={done ? <>{zoneTxt}{last ? <span className="live-now"> · now {r0(avg3(live))} W</span> : null}</>
                       : !last ? '' : p > 0 ? zoneTxt : 'Not pedaling'}>
         <div className="zonebar" aria-hidden="true">
@@ -636,13 +678,44 @@ function Laps({ hist, laps, ftp, recording }) {
 }
 
 // ------------------------------------------------------------------ Strava
+// One-time: the keys of the rider's own Strava API app, saved by the logger in strava_config.json.
+function StravaSetup({ onDone }) {
+  const [cid, setCid] = useState('');
+  const [sec, setSec] = useState('');
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const save = e => {
+    e.preventDefault(); setBusy(true); setErr(null);
+    fetch('/strava/setup', { method: 'POST', body: new URLSearchParams({ client_id: cid, client_secret: sec }) })
+      .then(r => r.text().then(t => r.ok ? (setSec(''), onDone && onDone()) : setErr(t)))
+      .catch(() => setErr('The logger is not reachable.'))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <form className="strava-setup" onSubmit={save}>
+      <p className="help">First time: create an app at <a href="https://www.strava.com/settings/api" target="_blank" rel="noreferrer">strava.com/settings/api</a> (any
+        name and website, <b>Authorization Callback Domain</b>: <code>localhost</code>), then copy its keys here.</p>
+      <label htmlFor="strava-id">Client ID</label>
+      <input id="strava-id" inputMode="numeric" autoComplete="off" value={cid} onChange={e => setCid(e.target.value)} required />
+      <label htmlFor="strava-secret">Client Secret</label>
+      <input id="strava-secret" type="password" autoComplete="off" value={sec} onChange={e => setSec(e.target.value)}
+             aria-invalid={!!err} aria-describedby="strava-err" required />
+      <div className="inline"><button className="primary" disabled={busy || !cid || !sec}>Save keys</button></div>
+      <p id="strava-err" className={'help' + (err ? ' err' : '')}>{err || 'Saved only on this computer, never uploaded.'}</p>
+    </form>
+  );
+}
+
 function StravaAccount({ strava }) {
   const [armed, setArmed] = useArmed(strava.connected);
+  const [editKeys, setEditKeys] = useState(false);
+  if (!strava.connected && (!strava.configured || editKeys))
+    return <StravaSetup onDone={() => setEditKeys(false)} />;
   if (!strava.connected)
     return <>
       <div className="inline"><a className="btn strava" href="/strava/connect">Connect to Strava</a></div>
-      <p className="help">{strava.configured ? 'Sign in on Strava once to allow uploads.'
-        : <>First time: run <code>uv run thinkrider_logger.py --strava-setup</code></>}</p>
+      <p className="help">Sign in on Strava once to allow uploads.{' '}
+        <button className="link" onClick={() => setEditKeys(true)}>Change app keys</button></p>
     </>;
   return <>
     <div className="inline">
@@ -720,7 +793,11 @@ function exportCsv(hist) {
 }
 
 function App() {
-  const { hist, laps, status, online, version, preview } = useLiveFeed();
+  const [smooth, setSmooth] = useStored('powerSmooth', 0);
+  const [liveRate, setLiveRate] = useStored('liveRate', 'auto');
+  const touch = useMemo(() => window.matchMedia('(pointer: coarse)').matches, []);
+  const rate = liveRate === 'saver' || (liveRate === 'auto' && touch) ? 2 : 0;
+  const { hist, laps, status, online, version, preview, now, recent } = useLiveFeed(rate);
   const ride = status.ride || {};
   const strava = status.strava || {};
   const mode = ride.state === 'recording' ? 'recording' : ride.state === 'finished' ? 'finished' : 'ready';
@@ -784,14 +861,15 @@ function App() {
               toggleSettings={() => setSettingsOpen(o => !o)}
               devicesOpen={devicesOpen} toggleDevices={() => setDevicesOpen(o => !o)} />
       {devicesOpen && <Devices status={status} recording={mode === 'recording'} />}
-      {settingsOpen && <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} strava={strava}
+      {settingsOpen && <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} strava={strava} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
                                  onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} />}
       {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
       <StravaNotice />
       <RideStrip ride={ride} seconds={hist.length} strava={strava} startArmed={startArmed} lapFlash={lapFlash}
                  onDownload={() => setDownloaded(ride.fit)} />
-      <Hero hist={hist} st={st} ftp={ftp} preview={mode === 'recording' ? null : preview} mode={mode} />
+      <Hero hist={hist} st={st} ftp={ftp} preview={mode === 'recording' ? null : preview} mode={mode}
+            now={now} recent={recent} smooth={smooth} />
       <Stats hist={hist} st={st} ftp={ftp} kg={kg} more={more} setMore={setMore} mode={mode} />
       <section className="main">
         <Charts hist={hist} laps={laps} ftp={ftp} win={win} setWin={setWin} version={version} />

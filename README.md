@@ -82,8 +82,9 @@ distance, heart rate, laps). Upload it by hand at
 1. Create your own Strava API app at
    [strava.com/settings/api](https://www.strava.com/settings/api). Any name and
    website are fine; set **Authorization Callback Domain** to `localhost`.
-2. Run `uv run thinkrider_logger.py --strava-setup` and enter the Client ID and Client
-   Secret. They are saved in `strava_config.json` next to the script (or set
+2. On the dashboard open **Settings**, paste the Client ID and Client Secret under
+   **Strava** and click **Save keys** (or run `uv run thinkrider_logger.py --strava-setup`).
+   They are saved in `strava_config.json` next to the script (or set
    `STRAVA_CLIENT_ID` / `STRAVA_CLIENT_SECRET`). Don't share the secret.
 3. Click **Connect to Strava** on the dashboard and approve on Strava's page. The
    sign-in is kept in `strava_token.json` and refreshed automatically.
@@ -102,6 +103,12 @@ after Finish it shows the ride's summary. Keys: `S` start, `L` lap, `F` twice to
 finish. FTP, weight, Strava account and CSV export are under **Settings**; FTP,
 weight and chart window are remembered in the browser.
 
+The big numbers update on every reading the trainer sends (a few times a second), within
+a few milliseconds; recording and the charts stay at one sample per second. **Settings >
+Power number** switches between instant power and a 3 s / 5 s average. **Live updates**
+is instant on a computer and capped at 2 updates a second on a phone or tablet to save
+its battery (change it there).
+
 It is a React app in `dashboard/`, compiled into the single self-contained
 `dashboard.html` (works offline, no CDN). The built file is committed, so you only
 need Node.js and [pnpm](https://pnpm.io/) if you change the dashboard:
@@ -113,7 +120,7 @@ pnpm build           # rewrites ../dashboard.html
 ```
 
 The script talks to the page over `GET /events` (Server-Sent Events: `init`,
-`sample`, `preview`, `status`, `laps`), `POST /start`, `/finish`, `/lap`, `/quit`,
+`sample`, `preview`, `live`, `status`, `laps`; `/events?live=2` caps `live` at 2/s), `POST /start`, `/finish`, `/lap`, `/quit`, `/strava/setup`,
 `POST /devices/scan`, `/devices/use?role=trainer|hr&address=..&name=..`,
 `/devices/off?role=..`, `GET /ride.fit` and the `/strava/...` routes. POSTs from other
 sites are refused.
