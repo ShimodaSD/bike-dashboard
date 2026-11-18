@@ -26,7 +26,6 @@ const fmtT = s => {
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
   return h ? `${h}:${pad2(m)}:${pad2(x)}` : `${m}:${pad2(x)}`;
 };
-const fmtClock = s => `${Math.floor(s / 3600)}:${pad2(Math.floor((s % 3600) / 60))}:${pad2(s % 60)}`;
 const zoneOf = (p, ftp) => { const i = ZONES.findIndex(z => p / ftp < z.hi); return i < 0 ? 6 : i; };
 const cssVar = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 

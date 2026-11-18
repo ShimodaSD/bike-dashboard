@@ -25,8 +25,11 @@ numbers but saves nothing. Use `--autostart` to record straight away.
 
 Each run is saved to `x2max_YYYYMMDD_HHMMSS/`: `ride_<date>_<time>.fit` (one per ride),
 `session_1hz.csv`, `decoded.csv`, `raw_packets.csv` and `gatt_dump.json`. Ctrl+C in the
-middle of a ride still saves the `.fit`. To rebuild a `.fit` from a saved CSV:
+middle of a ride still saves the `.fit`. To rebuild the `.fit` files from the saved CSVs
+(`session_1hz.csv` -> `ride.fit`, `session_1hz_2.csv` -> `ride_2.fit`, ...):
 `uv run thinkrider_logger.py --fit-from x2max_YYYYMMDD_HHMMSS`.
+
+Self-check for the packet decoder and the `.fit` writer: `uv run python -m unittest test_logger`.
 
 ## Heart rate from a Garmin watch (Forerunner 165)
 
