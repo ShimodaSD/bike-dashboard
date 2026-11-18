@@ -16,7 +16,7 @@ Record every ride on the X2Max from macOS, where the ThinkRider app can't read t
 
 ## Positioning
 
-A small local tool instead of a heavy training app: it works on macOS where ThinkRider doesn't, and it stays light on battery compared to apps like Zwift. No account, no cloud service beyond the optional Strava upload, and it never writes to the trainer.
+A small local tool instead of a heavy training app: it works on macOS where ThinkRider doesn't, and it stays light on battery compared to apps like Zwift. It works fully offline: no account, no internet needed to ride, record or view the dashboard. Strava upload is the only optional online step, and it never writes to the trainer.
 
 ## Operating Context
 
@@ -30,6 +30,7 @@ A small local tool instead of a heavy training app: it works on macOS where Thin
 - Live metrics: power, cadence, speed, heart rate, zones, NP/TSS, laps, live charts.
 - Dashboard is React (source in `dashboard/src`, built with pnpm) served by the Python logger (uv).
 - Must stay light on CPU and battery on a laptop running unplugged: no heavy animation, WebGL or constant re-rendering beyond what live data needs.
+- Must work with no internet connection: no CDN scripts, web fonts or remote assets at runtime; everything is bundled locally.
 - Must work in a laptop browser on macOS and on the Galaxy S26+ at phone width.
 
 ## Brand Commitments
@@ -45,4 +46,4 @@ Real ride data from the logger (`session_1hz.csv`, `.fit` files) and the `--demo
 1. Glanceable first: the current numbers must read in under a second at a distance, mid-effort.
 2. Never lose a ride: recording state is always obvious, and ending a ride is deliberate.
 3. Light by default: every visual addition earns its CPU and battery cost.
-4. Local and private: nothing leaves the machine unless the rider uploads it.
+4. Offline and private: works with no internet, and nothing leaves the machine unless the rider uploads it.
