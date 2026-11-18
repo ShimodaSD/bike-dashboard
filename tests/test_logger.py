@@ -1,5 +1,5 @@
 """Self-check for the parts that must not silently break: packet decoding and the .FIT file.
-Run: uv run python -m unittest test_logger"""
+Run: uv run python -m unittest discover tests"""
 import asyncio
 import os
 import struct
@@ -8,7 +8,9 @@ import types
 import unittest
 from unittest import mock
 
-import thinkrider_logger as tl
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logger"))
+import thinkrider_logger as tl  # noqa: E402
 
 
 class LoggerTest(unittest.TestCase):

@@ -1,0 +1,15 @@
+<workout_file>
+    <author>X2Max dashboard</author>
+    <name>Speed test · Tempo steps</name>
+    <description>16 min. Speed targets in km/h (Speed is an X2Max-dashboard extra; Zwift ignores it). The trainer's speed depends on gear and resistance, so change the numbers to fit your setup.</description>
+    <sportType>bike</sportType>
+    <workout>
+        <FreeRide Duration="180" Speed="25"/>
+        <FreeRide Duration="180" Speed="28"/>
+        <FreeRide Duration="60" Speed="25"/>
+        <FreeRide Duration="180" Speed="31"/>
+        <FreeRide Duration="60" Speed="25"/>
+        <FreeRide Duration="120" Speed="33"/>
+        <FreeRide Duration="180" Speed="24"/>
+    </workout>
+</workout_file>
