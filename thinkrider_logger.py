@@ -4,7 +4,8 @@ thinkrider_logger.py - capture ALL Bluetooth LE data from a ThinkRider X2Max
 (or any BLE smart trainer) and show a LIVE training dashboard in your browser.
 
 What it does
-  1. Scans for the trainer (by name or MAC/UUID address) and connects.
+  1. Connects to the trainer and heart-rate device picked on the dashboard
+     (Devices panel; remembered in devices.json). First start: finds them by name.
   2. Dumps the full GATT table + every readable value      -> gatt_dump.json
   3. Subscribes to EVERY notify/indicate characteristic (incl. proprietary).
   4. Logs every packet as raw hex                          -> raw_packets.csv
@@ -21,6 +22,7 @@ Requirements
   dashboard.html must sit in the same folder as this script.
 
 Usage
+  macOS: double-click "Start X2Max.command" (no terminal typing needed)
   uv run thinkrider_logger.py                 # find trainer, log + dashboard
   uv run thinkrider_logger.py --demo          # fake ride, to try the dashboard
   uv run thinkrider_logger.py --scan          # list nearby BLE devices
@@ -55,6 +57,7 @@ import os
 import glob
 import random
 import secrets
+import signal
 import struct
 import sys
 import time
@@ -350,6 +353,9 @@ class Live:
         self.strava = None
         self.port = 8000
         self.fit_path = None
+        self.gatt_dumped = False
+        self.devices = None            # Devices: trainer / heart-rate choice (device panel)
+        self.quit = None               # stops the logger (Stop button, closed launcher window)
 
     # -- ride control (Start / Finish buttons) ------------------------------
     @property
@@ -561,6 +567,24 @@ async def handle_http(reader, writer, live: Live):
         elif path == "/strava/upload" and method == "POST":
             asyncio.ensure_future(strava.upload_last_ride())
             body, ctype, code = b"ok", "text/plain", "200 OK"
+        elif path.startswith("/devices/") and method == "POST" and live.devices:
+            devs, act, role = live.devices, path[len("/devices/"):], params.get("role")
+            body, ctype, code = b"ok", "text/plain", "200 OK"
+            if act == "scan":
+                devs.scan()
+            elif role in ROLES and act == "use" and 0 < len(params.get("address", "")) <= 200:
+                asyncio.ensure_future(devs.set(role, {"mode": "device", "address": params["address"],
+                                                      "name": params.get("name", "")[:100] or None}))
+            elif role in ROLES and act == "auto":
+                asyncio.ensure_future(devs.set(role, {"mode": "auto"}))
+            elif role in ROLES and act == "off":
+                asyncio.ensure_future(devs.set(role, {**devs.choice[role], "mode": "off"}))
+            else:
+                body, code = b"bad request", "400 Bad Request"
+        elif path == "/quit" and method == "POST" and live.quit:
+            print("Stop pressed on the dashboard")
+            live.quit()
+            body, ctype, code = b"ok", "text/plain", "200 OK"
         elif path in ("/start", "/finish") and method == "POST":
             live.start_ride() if path == "/start" else live.finish_ride()
             body, ctype, code = b"ok", "text/plain", "200 OK"
@@ -617,15 +641,35 @@ async def scan(timeout: float):
           "Broadcast Heart Rate first (see README).")
 
 
-async def find_trainer(name_hint, address, timeout):
-    if address:
-        return await BleakScanner.find_device_by_address(address, timeout=timeout)
-    hints = [name_hint.lower()] if name_hint else ["think", "x2", "x2max", "x2-max"]
+TRAINER_HINTS = ("think", "x2", "x2max", "x2-max")
+TRAINER_SVCS = {u16(0x1826), u16(0x1818)}       # FTMS, Cycling Power
+HR_SVC = u16(0x180D)
+HR_HINTS = ("forerunner", "garmin", "fr165", "fr 165")
+
+
+def adv_name(dev, adv) -> str:
+    return dev.name or adv.local_name or ""
+
+
+def device_kind(name, service_uuids) -> str:
+    """'trainer', 'hr' or 'other', from what a device advertises (for the device panel)."""
+    nm = (name or "").lower()
+    svcs = {s.lower() for s in service_uuids}
+    if svcs & TRAINER_SVCS or any(h in nm for h in ("think", "x2max", "x2 max", "x2-max")):
+        return "trainer"
+    if HR_SVC in svcs or any(h in nm for h in HR_HINTS):
+        return "hr"
+    return "other"
+
+
+async def find_trainer(name_hint, timeout):
+    """No device picked yet: the first ThinkRider / X2 name, else any FTMS trainer."""
+    hints = [name_hint.lower()] if name_hint else list(TRAINER_HINTS)
     ftms = u16(0x1826)
     found = await BleakScanner.discover(timeout=timeout, return_adv=True)
     candidates = []
     for dev, adv in found.values():
-        nm = (dev.name or adv.local_name or "").lower()
+        nm = adv_name(dev, adv).lower()
         if any(h in nm for h in hints):
             candidates.append((0, dev, adv))
         elif not name_hint and ftms in [s.lower() for s in adv.service_uuids]:
@@ -636,23 +680,18 @@ async def find_trainer(name_hint, address, timeout):
     return candidates[0][1]
 
 
-HR_SVC = u16(0x180D)
-HR_HINTS = ("forerunner", "garmin", "fr165", "fr 165")
-
-
-async def find_hr(args, exclude):
-    """Find a device broadcasting heart rate (Garmin watch, chest strap ...)."""
-    if args.hr_address:
-        return await BleakScanner.find_device_by_address(args.hr_address, timeout=args.scan_time)
-    found = await BleakScanner.discover(timeout=args.scan_time, return_adv=True)
+async def find_hr(name_hint, timeout, exclude):
+    """No heart-rate device picked yet: any device broadcasting heart rate
+    (Garmin watch, chest strap ...), Garmin / Forerunner names first."""
+    found = await BleakScanner.discover(timeout=timeout, return_adv=True)
     candidates = []
     for dev, adv in found.values():
         if exclude and dev.address == exclude:
             continue
-        nm = (dev.name or adv.local_name or "").lower()
+        nm = adv_name(dev, adv).lower()
         has_hr = HR_SVC in [x.lower() for x in adv.service_uuids]
-        if args.hr_name:
-            if args.hr_name.lower() in nm:
+        if name_hint:
+            if name_hint.lower() in nm:
                 candidates.append((0, dev, adv))
         elif has_hr:
             candidates.append((0 if any(h in nm for h in HR_HINTS) else 1, dev, adv))
@@ -661,6 +700,19 @@ async def find_hr(args, exclude):
     candidates.sort(key=lambda c: (c[0], -(c[2].rssi or -999)))
     return candidates[0][1]
 
+
+async def find_chosen(choice, timeout, exclude=None):
+    """The device picked on the dashboard: by address, or by its exact name
+    (macOS can give a device a new address id after a Bluetooth reset).
+    Returns as soon as it is seen."""
+    addr = (choice.get("address") or "").lower()
+    name = choice.get("name")
+
+    def match(dev, adv):
+        if exclude and dev.address == exclude:
+            return False
+        return dev.address.lower() == addr or bool(name) and adv_name(dev, adv) == name
+    return await BleakScanner.find_device_by_filter(match, timeout=timeout)
 
 # Scanning and connecting are serialized: several BLE stacks (BlueZ, WinRT)
 # refuse a scan while another scan or connection attempt is running.
@@ -1090,17 +1142,149 @@ def strava_setup():
 
 
 # --------------------------------------------------------------------------
-# Bluetooth loop with auto-reconnect
+# Device choice: which trainer and heart-rate device to use. Picked on the
+# dashboard's device panel; the last pick is kept in devices.json (next to
+# the script) and reconnected automatically on the next start.
 # --------------------------------------------------------------------------
-async def ble_loop(args, live: Live, raw_w, dec_w, t0):
-    first = True
-    while True:
+DEVICES_FILE = os.path.join(APP_DIR, "devices.json")
+ROLES = ("trainer", "hr")
+KIND_ORDER = {"trainer": 0, "hr": 1, "other": 2}
+
+
+class Devices:
+    """A choice per role is {"mode": "auto" | "device" | "off", "address", "name"}.
+    auto = take the first trainer / heart-rate broadcaster found (first start),
+    device = that device only, off = don't connect."""
+
+    def __init__(self, live, args, demo=False):
+        self.live, self.demo = live, demo
+        self.runners = {}                 # role -> coroutine function (connect + stay connected)
+        self.tasks = {}
+        self.locks = {r: asyncio.Lock() for r in ROLES}
+        self.scan_task = None
+        self.saved = {} if demo else (_read_json(DEVICES_FILE) or {})
+        self.choice = {}
+        for role in ROLES:
+            c = self.saved.get(role)
+            ok = (isinstance(c, dict) and c.get("mode") in ("auto", "device", "off")
+                  and (c["mode"] != "device" or c.get("address")))
+            self.choice[role] = dict(c) if ok else {"mode": "auto"}
+        # command-line options win for this run (and are not saved unless they connect)
+        if args.address:
+            self.choice["trainer"] = {"mode": "device", "address": args.address, "name": None}
+        elif args.name:
+            self.choice["trainer"] = {"mode": "auto"}
+        if args.no_hr:
+            self.choice["hr"] = {**self.choice["hr"], "mode": "off"}
+        elif args.hr_address:
+            self.choice["hr"] = {"mode": "device", "address": args.hr_address, "name": None}
+        elif args.hr_name:
+            self.choice["hr"] = {"mode": "auto"}
+        live.status["devices"] = self.choice
+        live.status["scan"] = {"state": None, "found": []}
+
+    def _save(self, role):
+        if self.demo:
+            return
+        self.saved[role] = self.choice[role]
         try:
-            live.set_status(state="searching", connected=False)
-            print("Searching for trainer ...")
+            with open(DEVICES_FILE, "w") as fh:
+                json.dump(self.saved, fh, indent=2)
+        except OSError as e:
+            print(f"Could not save {DEVICES_FILE}: {e}")
+
+    def start(self, role):
+        if self.choice[role]["mode"] == "off":
+            if role == "trainer":
+                self.live.trainer_address = None
+                self.live.set_status(state="off", connected=False, device=None)
+            else:
+                self.live.set_hr_status(state="off", device=None)
+            return
+        self.tasks[role] = asyncio.create_task(self.runners[role]())
+
+    async def stop(self, role):
+        t = self.tasks.pop(role, None)
+        if t:
+            t.cancel()
+            await asyncio.gather(t, return_exceptions=True)
+
+    async def set(self, role, choice):
+        """Switch a role to another device, to auto, or off (disconnects first)."""
+        async with self.locks[role]:
+            await self.stop(role)
+            self.choice[role] = choice
+            self._save(role)
+            self.start(role)
+            self.live.broadcast("status", self.live.status)
+        other = "hr" if role == "trainer" else "trainer"
+        oc = self.choice[other]
+        if (choice["mode"] == "device" and oc["mode"] != "off"
+                and (oc.get("address") or "").lower() == choice["address"].lower()):
+            await self.set(other, {**oc, "mode": "off"})      # one device can't be both
+
+    def remember(self, role, address, name):
+        """Called on connect: this device is the one to reconnect next time."""
+        c = self.choice[role]
+        if c.get("mode") != "device" or c.get("address") != address or c.get("name") != name:
+            self.choice[role] = {"mode": "device", "address": address, "name": name}
+            self._save(role)
+
+    def scan(self):
+        if not (self.scan_task and not self.scan_task.done()):
+            self.scan_task = asyncio.create_task(self._scan())
+
+    async def _scan(self, seconds=6):
+        """On demand only (device panel open), so Bluetooth isn't kept scanning."""
+        st = self.live.status
+        st["scan"] = {"state": "scanning", "found": st["scan"].get("found", [])}
+        self.live.broadcast("status", st)
+        try:
+            if self.demo:
+                await asyncio.sleep(2)
+                found = [dict(d) for d in DEMO_FOUND]
+            else:
+                async with BLE_LOCK:
+                    res = await BleakScanner.discover(timeout=seconds, return_adv=True)
+                found = []
+                for dev, adv in res.values():
+                    name = adv_name(dev, adv)
+                    kind = device_kind(name, adv.service_uuids)
+                    if name or kind != "other":            # skip anonymous beacons
+                        found.append({"address": dev.address, "name": name or None,
+                                      "rssi": adv.rssi, "kind": kind})
+            found.sort(key=lambda d: (KIND_ORDER[d["kind"]], -(d["rssi"] or -999)))
+            st["scan"] = {"state": "done", "found": found}
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            st["scan"] = {"state": "error", "error": str(e), "found": []}
+        self.live.broadcast("status", st)
+
+    async def close(self):
+        if self.scan_task:
+            self.scan_task.cancel()
+        for role in ROLES:
+            await self.stop(role)
+
+
+# --------------------------------------------------------------------------
+# Bluetooth connections with auto-reconnect (one task per role)
+# --------------------------------------------------------------------------
+async def trainer_loop(args, live: Live, devices: Devices, raw_w, dec_w, t0):
+    while True:
+        client = None
+        try:
+            choice = devices.choice["trainer"]
+            wanted = choice.get("name") if choice["mode"] == "device" else None
+            live.set_status(state="searching", connected=False, device=wanted)
+            print(f"Searching for {wanted or 'trainer'} ...")
             gone = asyncio.Event()
             async with BLE_LOCK:
-                dev = await find_trainer(args.name, args.address, args.scan_time)
+                if choice["mode"] == "device":
+                    dev = await find_chosen(choice, args.scan_time)
+                else:
+                    dev = await find_trainer(args.name, args.scan_time)
                 if dev:
                     client = BleakClient(dev, disconnected_callback=lambda _c: gone.set())
                     await client.connect()
@@ -1108,125 +1292,149 @@ async def ble_loop(args, live: Live, raw_w, dec_w, t0):
                 print("  not found - pedal to wake it, close other apps. Retrying ...")
                 await asyncio.sleep(2)
                 continue
+            name = dev.name or choice.get("name") or dev.address
             live.trainer_address = dev.address
-            try:
-                print(f"Connected to {dev.name} [{dev.address}]")
-                for calc in (cps_crank, cps_wheel, csc_crank, csc_wheel):
-                    calc.prev = None         # stale counters would give a fake rpm spike
-                if first:
-                    await dump_gatt(client, dev, args.out)
-                    first = False
+            devices.remember("trainer", dev.address, name)
+            print(f"Connected to {name} [{dev.address}]")
+            for calc in (cps_crank, cps_wheel, csc_crank, csc_wheel):
+                calc.prev = None         # stale counters would give a fake rpm spike
+            if not live.gatt_dumped:
+                await dump_gatt(client, dev, args.out)
+                live.gatt_dumped = True
 
-                def make_handler(svc_uuid, ch):
-                    name = uuid_name(ch.uuid)
-                    decoder = DECODERS.get(ch.uuid)
+            def make_handler(svc_uuid, ch):
+                cname = uuid_name(ch.uuid)
+                decoder = DECODERS.get(ch.uuid)
 
-                    def handler(_sender, data: bytearray):
-                        ts = datetime.now(timezone.utc).isoformat()
-                        el = round(time.monotonic() - t0, 3)
-                        raw_w.writerow([ts, el, svc_uuid, ch.uuid, name, ch.handle,
-                                        len(data), data.hex()])
-                        live.packets += 1
-                        if decoder:
-                            try:
-                                row = decoder(bytes(data))
-                                live.update(row)
-                                row.update(timestamp_utc=ts, elapsed_s=el, source=name)
-                                dec_w.writerow(row)
-                            except Exception as e:
-                                print(f"[decode error {name}: {e} data={data.hex()}]")
-                    return handler
+                def handler(_sender, data: bytearray):
+                    ts = datetime.now(timezone.utc).isoformat()
+                    el = round(time.monotonic() - t0, 3)
+                    raw_w.writerow([ts, el, svc_uuid, ch.uuid, cname, ch.handle,
+                                    len(data), data.hex()])
+                    live.packets += 1
+                    if decoder:
+                        try:
+                            row = decoder(bytes(data))
+                            live.update(row)
+                            row.update(timestamp_utc=ts, elapsed_s=el, source=cname)
+                            dec_w.writerow(row)
+                        except Exception as e:
+                            print(f"[decode error {cname}: {e} data={data.hex()}]")
+                return handler
 
-                n = 0
-                for svc in client.services:
-                    for ch in svc.characteristics:
-                        if "notify" in ch.properties or "indicate" in ch.properties:
-                            try:
-                                await client.start_notify(ch, make_handler(svc.uuid, ch))
-                                n += 1
-                            except Exception as e:
-                                print(f"  subscribe failed {uuid_name(ch.uuid)}: {e}")
-                print(f"Subscribed to {n} characteristics. Riding data is live.")
-                live.set_status(state="connected", connected=True,
-                                device=dev.name or dev.address)
-                await gone.wait()
-            finally:
+            n = 0
+            for svc in client.services:
+                for ch in svc.characteristics:
+                    if "notify" in ch.properties or "indicate" in ch.properties:
+                        try:
+                            await client.start_notify(ch, make_handler(svc.uuid, ch))
+                            n += 1
+                        except Exception as e:
+                            print(f"  subscribe failed {uuid_name(ch.uuid)}: {e}")
+            print(f"Subscribed to {n} characteristics. Riding data is live.")
+            live.set_status(state="connected", connected=True, device=name)
+            await gone.wait()
+            print("Trainer disconnected - reconnecting ...")
+        except asyncio.CancelledError:
+            print("Trainer disconnected from the dashboard")
+            raise
+        except Exception as e:
+            print(f"Bluetooth error: {e} - retrying ...")
+        finally:
+            if client is not None:
                 try:
                     await client.disconnect()
                 except Exception:
                     pass
-            print("Trainer disconnected - reconnecting ...")
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            print(f"Bluetooth error: {e} - retrying ...")
         live.set_status(state="reconnecting", connected=False)
         await asyncio.sleep(3)
 
 
-async def hr_loop(args, live: Live, raw_w, dec_w, t0):
+async def hr_loop(args, live: Live, devices: Devices, raw_w, dec_w, t0):
     """Second BLE connection to a heart-rate broadcaster (e.g. Garmin Forerunner
     with Broadcast Heart Rate on). Independent of the trainer, own reconnect."""
     hr_char = u16(0x2A37)
     told = False
     while True:
+        client = None
         try:
-            live.set_hr_status(state="searching", device=None)
+            choice = devices.choice["hr"]
+            live.set_hr_status(state="searching",
+                               device=choice.get("name") if choice["mode"] == "device" else None)
             if not told:
                 print("Looking for a heart-rate broadcast (watch: turn on Broadcast Heart Rate) ...")
                 told = True
             gone = asyncio.Event()
             async with BLE_LOCK:
-                exclude = live.trainer_address if not args.hr_address else None
-                dev = await find_hr(args, exclude)
+                if choice["mode"] == "device":
+                    dev = await find_chosen(choice, args.scan_time, live.trainer_address)
+                else:
+                    dev = await find_hr(args.hr_name, args.scan_time, live.trainer_address)
                 if dev:
                     client = BleakClient(dev, disconnected_callback=lambda _c: gone.set())
                     await client.connect()
             if not dev:
                 await asyncio.sleep(5)
                 continue
-            name = dev.name or dev.address
-            try:
-                def handler(_sender, data: bytearray):
-                    ts = datetime.now(timezone.utc).isoformat()
-                    el = round(time.monotonic() - t0, 3)
-                    raw_w.writerow([ts, el, HR_SVC, hr_char, f"Heart Rate Measurement ({name})",
-                                    "", len(data), data.hex()])
-                    try:
-                        row = decode_hr(bytes(data))
-                    except Exception as e:
-                        print(f"[decode error HR: {e} data={data.hex()}]")
-                        return
-                    live.update_hr(row["heart_rate_bpm"])
-                    row.update(timestamp_utc=ts, elapsed_s=el, source=f"HR device ({name})")
-                    dec_w.writerow(row)
+            name = dev.name or choice.get("name") or dev.address
+            devices.remember("hr", dev.address, name)
 
-                await client.start_notify(hr_char, handler)
-                print(f"Heart rate from {name} [{dev.address}]")
-                live.set_hr_status(state="connected", device=name)
-                await gone.wait()
-            finally:
+            def handler(_sender, data: bytearray):
+                ts = datetime.now(timezone.utc).isoformat()
+                el = round(time.monotonic() - t0, 3)
+                raw_w.writerow([ts, el, HR_SVC, hr_char, f"Heart Rate Measurement ({name})",
+                                "", len(data), data.hex()])
                 try:
-                    await client.disconnect()
-                except Exception:
-                    pass
+                    row = decode_hr(bytes(data))
+                except Exception as e:
+                    print(f"[decode error HR: {e} data={data.hex()}]")
+                    return
+                live.update_hr(row["heart_rate_bpm"])
+                row.update(timestamp_utc=ts, elapsed_s=el, source=f"HR device ({name})")
+                dec_w.writerow(row)
+
+            await client.start_notify(hr_char, handler)
+            print(f"Heart rate from {name} [{dev.address}]")
+            live.set_hr_status(state="connected", device=name)
+            await gone.wait()
             print(f"Heart-rate device {name} lost - reconnecting ...")
         except asyncio.CancelledError:
             raise
         except Exception as e:
             print(f"Heart-rate device error: {e} - retrying ...")
+        finally:
+            if client is not None:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
         live.set_hr_status(state="reconnecting")
         await asyncio.sleep(3)
 
 
 # --------------------------------------------------------------------------
-# Demo ride (no trainer needed)
+# Demo ride (no trainer needed): simulated devices, so the device panel works too
 # --------------------------------------------------------------------------
-async def demo_loop(live: Live, hr_on=True):
-    live.set_status(state="demo", connected=True, device="Demo ride")
-    if hr_on:
-        live.set_hr_status(state="searching")
-    t, hr = 0, 92.0
+DEMO_FOUND = [
+    {"address": "DEMO-X2MAX", "name": "X2Max (demo)", "rssi": -54, "kind": "trainer"},
+    {"address": "DEMO-FR165", "name": "Forerunner 165 (demo)", "rssi": -61, "kind": "hr"},
+    {"address": "DEMO-HRM", "name": "HRM-Dual (demo)", "rssi": -83, "kind": "hr"},
+    {"address": "DEMO-SPEAKER", "name": "Living room speaker", "rssi": -72, "kind": "other"},
+]
+
+
+def _demo_device(choice, default):
+    return next((d for d in DEMO_FOUND if d["address"] == choice.get("address")), default)
+
+
+async def demo_trainer(live: Live, devices: Devices):
+    dev = _demo_device(devices.choice["trainer"], DEMO_FOUND[0])
+    live.set_status(state="searching", connected=False, device=dev["name"])
+    await asyncio.sleep(1.5)
+    live.trainer_address = dev["address"]
+    devices.remember("trainer", dev["address"], dev["name"])
+    live.set_status(state="demo", connected=True, device=dev["name"])
+    t = 0
     while True:
         if t < 300:
             target = 110 + 90 * t / 300                    # warm-up ramp
@@ -1236,13 +1444,22 @@ async def demo_loop(live: Live, hr_on=True):
         p = max(0.0, random.gauss(target, 9))
         cad = random.gauss(93 if target > 250 else 86, 2)
         spd = 3.6 * (p / 0.32) ** (1 / 3) if p > 0 else 0  # rough flat-road speed
-        hr += ((62 + 0.42 * p) - hr) * 0.035 + random.gauss(0, 0.4)
         live.update({"power_w": p, "cadence_rpm": cad, "speed_kmh": spd})
-        if t == 4 and hr_on:
-            live.set_hr_status(state="connected", device="Forerunner 165 (demo)")
-        if t >= 4 and hr_on:
-            live.update_hr(hr)                             # simulated watch broadcast
         t += 1
+        await asyncio.sleep(1)
+
+
+async def demo_hr(live: Live, devices: Devices):
+    dev = _demo_device(devices.choice["hr"], DEMO_FOUND[1])
+    live.set_hr_status(state="searching", device=dev["name"])
+    await asyncio.sleep(4)
+    devices.remember("hr", dev["address"], dev["name"])
+    live.set_hr_status(state="connected", device=dev["name"])
+    hr = 92.0
+    while True:                                            # simulated watch broadcast
+        p = live._get("power_w", 3) or 0
+        hr += ((62 + 0.42 * p) - hr) * 0.035 + random.gauss(0, 0.4)
+        live.update_hr(hr)
         await asyncio.sleep(1)
 
 
@@ -1257,7 +1474,20 @@ async def main_async(args):
     live.port = args.port
     live.strava = Strava(live)
     live.status["strava"] = live.strava.public()
+    live.devices = devices = Devices(live, args, demo=args.demo)
     t0 = time.monotonic()
+
+    # Stop button on the dashboard, closing the launcher's Terminal window (SIGHUP) or
+    # a kill (SIGTERM) all end like Ctrl+C: a ride in progress is saved.
+    main_task = asyncio.current_task()
+    loop = asyncio.get_running_loop()
+    live.quit = lambda: loop.call_later(0.3, main_task.cancel)
+    for sig in (getattr(signal, "SIGHUP", None), signal.SIGTERM):
+        if sig is not None:
+            try:
+                loop.add_signal_handler(sig, main_task.cancel)
+            except (NotImplementedError, RuntimeError):
+                pass                          # Windows
 
     raw_f = open(os.path.join(args.out, "raw_packets.csv"), "w", newline="")
     dec_f = open(os.path.join(args.out, "decoded.csv"), "w", newline="")
@@ -1280,10 +1510,15 @@ async def main_async(args):
     if not args.no_browser:
         webbrowser.open(url)
 
-    source = demo_loop(live, not args.no_hr) if args.demo else ble_loop(args, live, raw_w, dec_w, t0)
-    tasks = [asyncio.create_task(source), asyncio.create_task(ticker(live, args.duration))]
-    if not args.demo and not args.no_hr:
-        tasks.append(asyncio.create_task(hr_loop(args, live, raw_w, dec_w, t0)))
+    if args.demo:
+        devices.runners = {"trainer": lambda: demo_trainer(live, devices),
+                           "hr": lambda: demo_hr(live, devices)}
+    else:
+        devices.runners = {"trainer": lambda: trainer_loop(args, live, devices, raw_w, dec_w, t0),
+                           "hr": lambda: hr_loop(args, live, devices, raw_w, dec_w, t0)}
+    for role in ROLES:
+        devices.start(role)
+    tasks = [asyncio.create_task(ticker(live, args.duration))]
 
     async def flusher():
         while True:
@@ -1292,11 +1527,12 @@ async def main_async(args):
     tasks.append(asyncio.create_task(flusher()))
 
     try:
-        await tasks[1]                      # ticker ends only when --duration elapses
+        await tasks[0]                      # ticker ends only when --duration elapses
     finally:
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await devices.close()
         server.close()
         fit = live.finish_ride()          # Ctrl+C mid-ride still saves the .FIT
         raw_f.close(); dec_f.close(); live.close()
@@ -1345,7 +1581,7 @@ def main():
         sys.exit("bleak is not installed. Run with:  uv run thinkrider_logger.py   (or try --demo)")
     try:
         asyncio.run(scan(args.scan_time) if args.scan else main_async(args))
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         pass
 
 
