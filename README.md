@@ -25,8 +25,11 @@ numbers but saves nothing. Use `--autostart` to record straight away.
 
 Each run is saved to `x2max_YYYYMMDD_HHMMSS/`: `ride_<date>_<time>.fit` (one per ride),
 `session_1hz.csv`, `decoded.csv`, `raw_packets.csv` and `gatt_dump.json`. Ctrl+C in the
-middle of a ride still saves the `.fit`. To rebuild a `.fit` from a saved CSV:
+middle of a ride still saves the `.fit`. To rebuild the `.fit` files from the saved CSVs
+(`session_1hz.csv` -> `ride.fit`, `session_1hz_2.csv` -> `ride_2.fit`, ...):
 `uv run thinkrider_logger.py --fit-from x2max_YYYYMMDD_HHMMSS`.
+
+Self-check for the packet decoder and the `.fit` writer: `uv run python -m unittest test_logger`.
 
 ## Heart rate from a Garmin watch (Forerunner 165)
 
@@ -70,9 +73,11 @@ back to `localhost`); uploads work from any device after that.
 ## Dashboard
 
 `dashboard.html` is served by the script at http://localhost:8000. It shows power
-(3 s), cadence, speed, heart rate, power zones, NP / IF / TSS, W/kg, laps (button or
-`L` key) and live power / cadence / HR charts. FTP, weight and chart window are
-remembered in the browser.
+(3 s), cadence, speed, heart rate, power zones, NP / IF / TSS, W/kg, laps and live
+power / cadence / HR charts. While recording it shows a red REC strip and frame;
+after Finish it shows the ride's summary. Keys: `S` start, `L` lap, `F` twice to
+finish. FTP, weight, Strava account and CSV export are under **Settings**; FTP,
+weight and chart window are remembered in the browser.
 
 It is a React app in `dashboard/`, compiled into the single self-contained
 `dashboard.html` (works offline, no CDN). The built file is committed, so you only

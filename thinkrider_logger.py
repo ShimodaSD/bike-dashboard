@@ -52,7 +52,9 @@ import asyncio
 import csv
 import json
 import os
+import glob
 import random
+import secrets
 import struct
 import sys
 import time
@@ -185,10 +187,8 @@ class CadenceCalc:
             pr, pe = self.prev
             dr = (revs - pr) % self.rev_max
             de = (evt - pe) % 65536
-            if de > 0:
+            if de > 0:                # de == 0: no new event, keep previous value upstream
                 rpm = dr / (de / self.res) * 60
-            elif dr == 0:
-                rpm = None  # no new event; keep previous value upstream
         self.prev = (revs, evt)
         return rpm
 
@@ -338,7 +338,8 @@ class Live:
         self.clients = set()           # asyncio.Queue per dashboard tab
         self.status = {"state": "starting", "connected": False, "device": None,
                        "hr": {"state": "off", "device": None},
-                       "ride": {"state": "ready", "n": 0, "fit": None}}
+                       "ride": {"state": "ready", "n": 0, "fit": None,
+                                "dir": os.path.basename(os.path.abspath(out_dir))}}
         self.trainer_address = None
         self.distance_m = 0.0
         self.energy_kj = 0.0
@@ -367,7 +368,7 @@ class Live:
         self.sess_f = open(os.path.join(self.out_dir, name), "w", newline="")
         self.sess_w = csv.DictWriter(self.sess_f, fieldnames=SESSION_FIELDS)
         self.sess_w.writeheader()
-        self.status["ride"] = {"state": "recording", "n": n, "fit": None}
+        self.status["ride"] = {**self.status["ride"], "state": "recording", "n": n, "fit": None}
         if self.strava:
             self.strava.upload = {"state": None}
             self.status["strava"] = self.strava.public()
@@ -497,9 +498,17 @@ async def handle_http(reader, writer, live: Live):
     try:
         line = (await reader.readline()).decode("latin-1").split()
         method, path = (line[0], line[1]) if len(line) >= 2 else ("GET", "/")
-        while (await reader.readline()) not in (b"\r\n", b"\n", b""):
-            pass
+        headers = {}
+        while (h := await reader.readline()) not in (b"\r\n", b"\n", b""):
+            k, _, v = h.decode("latin-1").partition(":")
+            headers[k.strip().lower()] = v.strip()
         path, _, query = path.partition("?")
+        # Any web page can POST to localhost; browsers send Origin, so refuse other sites.
+        origin = headers.get("origin")
+        if method == "POST" and origin and urllib.parse.urlsplit(origin).netloc != headers.get("host"):
+            writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            await writer.drain()
+            return
         params = dict(urllib.parse.parse_qsl(query))
         strava = live.strava
 
@@ -533,7 +542,9 @@ async def handle_http(reader, writer, live: Live):
                                      b"then come back and click Connect to Strava again."), "text/plain", "200 OK"
         elif path == "/strava/callback":
             msg = "connected"
-            if "code" in params and "activity:write" in params.get("scope", ""):
+            if params.get("state") != strava.state:
+                msg = "error: sign-in link expired, click Connect to Strava again"
+            elif "code" in params and "activity:write" in params.get("scope", ""):
                 try:
                     await asyncio.to_thread(strava.exchange_code, params["code"])
                     print("Connected to Strava")
@@ -874,19 +885,25 @@ def write_fit(path, history, laps) -> bool:
 
 
 def fit_from_csv(folder):
-    """Rebuild ride.fit from a saved session_1hz.csv (e.g. after a crash)."""
-    with open(os.path.join(folder, "session_1hz.csv"), newline="") as fh:
-        hist = list(csv.DictReader(fh))
-    laps, prev = [], None
-    for i, s in enumerate(hist):
-        if s.get("lap") != prev:
-            laps.append(i)
-            prev = s.get("lap")
-    out = os.path.join(folder, "ride.fit")
-    if write_fit(out, hist, laps):
-        print(f"Wrote {out} ({len(hist)} s) - upload it to Strava or Garmin Connect")
-    else:
-        print("session_1hz.csv has no samples")
+    """Rebuild a .fit from every saved session_1hz*.csv (e.g. after a crash):
+    session_1hz.csv -> ride.fit, session_1hz_2.csv -> ride_2.fit, ..."""
+    csvs = sorted(glob.glob(os.path.join(folder, "session_1hz*.csv")))
+    if not csvs:
+        print(f"No session_1hz*.csv in {folder}")
+    for path in csvs:
+        with open(path, newline="") as fh:
+            hist = list(csv.DictReader(fh))
+        laps, prev = [], None
+        for i, s in enumerate(hist):
+            if s.get("lap") != prev:
+                laps.append(i)
+                prev = s.get("lap")
+        name = os.path.basename(path)
+        out = os.path.join(folder, "ride" + name[len("session_1hz"):-len(".csv")] + ".fit")
+        if write_fit(out, hist, laps):
+            print(f"Wrote {out} ({len(hist)} s) - upload it to Strava or Garmin Connect")
+        else:
+            print(f"{name} has no samples")
 
 
 # --------------------------------------------------------------------------
@@ -951,6 +968,7 @@ class Strava:
     def __init__(self, live):
         self.live = live
         self.upload = {"state": None}           # None | uploading | done | error
+        self.state = secrets.token_urlsafe(16)   # OAuth state: the callback must come from our own Connect link
 
     def creds(self):
         cid, sec = os.environ.get("STRAVA_CLIENT_ID"), os.environ.get("STRAVA_CLIENT_SECRET")
@@ -977,7 +995,7 @@ class Strava:
         q = urllib.parse.urlencode({
             "client_id": cid, "response_type": "code", "approval_prompt": "auto",
             "redirect_uri": f"http://localhost:{port}/strava/callback",
-            "scope": "read,activity:write"})
+            "scope": "read,activity:write", "state": self.state})
         return f"{STRAVA_WEB}/oauth/authorize?{q}"
 
     def _save_token(self, r, old=None):
