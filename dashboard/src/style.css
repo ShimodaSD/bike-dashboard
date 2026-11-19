@@ -43,7 +43,8 @@ code { font-size: .92em; color: var(--text-secondary); }
 
 /* ---------------- header: identity, status, ride actions */
 header { display: flex; align-items: center; gap: 12px 16px; flex-wrap: wrap; margin-bottom: 12px; }
-header h1 { font-size: 18px; font-weight: 650; margin: 0; }
+header h1 { font-size: 18px; font-weight: 650; margin: 0; display: flex; align-items: center; }
+header h1 .logo { width: 28px; height: 24px; margin-right: 8px; flex: none; }
 header h1 span { font-weight: 500; color: var(--text-secondary); margin-left: 4px; }
 .pills { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; background: none; border: 1px solid transparent;
          border-radius: 999px; padding: 2px; min-height: var(--tap); cursor: pointer; text-align: left; white-space: normal; }
