@@ -9,7 +9,8 @@ smart trainer) and watch a live training dashboard in your browser.
 Start X2Max.command   double-click to start (macOS)
 logger/               thinkrider_logger.py: Bluetooth, recording, .FIT, web server
                       trainer_control.py: climb simulation / ERG over FTMS (off by default)
-dashboard/            dashboard.html (built, served by the logger) and its React source in src/
+dashboard/            dashboard.html (built, served by the logger) and its React + TypeScript source in src/
+  src/types/          the logger's SSE payloads (feed.ts) and the workout model (workout.ts)
   src/workout/        workout files: reading .zwo / .erg / .mrc, step targets, off-target beep
   src/control/        Trainer control band: grade slider, ERG, workout grades
 tests/                self-check for the logger
@@ -157,15 +158,20 @@ step, or `OnHeartRate` / `OffHeartRate` on `IntervalsT`; speed the same way with
 - `cadence-drills.zwo` (16 min): 70 to 110 rpm blocks at an easy effort.
 - `speed-steps.zwo` (16 min): 24 to 33 km/h steps. Trainer speed depends on gear, so adjust.
 
-It is a React app in `dashboard/`, compiled into the single self-contained
+It is a React app written in TypeScript (strict) in `dashboard/`, compiled into the single self-contained
 `dashboard/dashboard.html` (works offline, no CDN). The built file is committed, so you only
 need Node.js and [pnpm](https://pnpm.io/) if you change the dashboard:
 
 ```bash
 cd dashboard
 pnpm install
+pnpm typecheck       # tsc --noEmit, strict
 pnpm build           # rewrites dashboard/dashboard.html
 ```
+
+esbuild strips the types without checking them, so run `pnpm typecheck` before a build.
+The SSE payload types in `dashboard/src/types/feed.ts` mirror what `logger/thinkrider_logger.py`
+sends: change both together.
 
 The script talks to the page over `GET /events` (Server-Sent Events: `init`,
 `sample`, `preview`, `live`, `status`, `laps`; `/events?live=2` caps `live` at 2/s), `POST /start`, `/finish`, `/lap`, `/clear`, `/quit`,

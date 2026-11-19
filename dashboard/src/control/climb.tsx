@@ -5,19 +5,21 @@
 //   POST /control/grade?pct=  simulate this grade (Climb mode)
 //   POST /control/power?w=    hold this power (ERG mode)
 // status.control = { enabled, state, mode: 'sim'|'erg', grade, power_w, msg, supports, power_range }
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { useEvent } from '../hooks/hooks.js';
+import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
+import { useEvent } from '../hooks/hooks';
+import type { ControlState, ControlStatus } from '../types/feed';
+import type { WorkoutAt } from '../types/workout';
 
-const post = path => fetch(path, { method: 'POST' }).catch(() => {});
+const post = (path: string) => fetch(path, { method: 'POST' }).catch(() => {});
 export const GRADE_MIN = -5, GRADE_MAX = 15, GRADE_STEP = 0.5;
 const QUICK = [0, 3, 6, 10];
 const ERG_PCT = [0.55, 0.75, 0.9, 1.05];       // quick ERG targets, fraction of FTP
 
-export const sendGrade = pct => post(`/control/grade?pct=${pct}`);
-export const sendPower = w => post(`/control/power?w=${Math.round(w)}`);
-export const fmtGrade = g => `${g > 0 ? '' : g < 0 ? '−' : ''}${Math.abs(g).toFixed(1)}`;
+export const sendGrade = (pct: number) => post(`/control/grade?pct=${pct}`);
+export const sendPower = (w: number) => post(`/control/power?w=${Math.round(w)}`);
+export const fmtGrade = (g: number) => `${g > 0 ? '' : g < 0 ? '−' : ''}${Math.abs(g).toFixed(1)}`;
 
-const STATE_TXT = {
+const STATE_TXT: Record<ControlState, string> = {
   off: 'Off',
   connecting: 'Taking control…',
   on: 'On',
@@ -30,10 +32,10 @@ const STATE_TXT = {
 // Sends at most every `gap` ms while a slider is dragged, and always the last value.
 // A send still pending when the dial goes away (control off, Climb <-> ERG) is dropped, so a
 // late grade can't flip the trainer back to the other mode.
-function useThrottled(fn, gap = 150) {
-  const last = useRef(0), timer = useRef(null), pending = useRef(null);
+function useThrottled(fn: (v: number) => void, gap = 150) {
+  const last = useRef(0), timer = useRef<ReturnType<typeof setTimeout>>(), pending = useRef(0);
   useEffect(() => () => clearTimeout(timer.current), []);
-  return useCallback(v => {
+  return useCallback((v: number) => {
     pending.current = v;
     const wait = gap - (Date.now() - last.current);
     if (wait <= 0) { last.current = Date.now(); fn(v); return; }
@@ -45,20 +47,25 @@ function useThrottled(fn, gap = 150) {
 // One number shown big, with − / + beside it, quick picks and a slider underneath.
 // The number picked here shows at once (the draft) until the logger reports it back.
 const DRAFT_MS = 1500;
-function Dial({ label, value, unit, fmt, min, max, step, quick, quickLabel, onSet }) {
-  const [draft, setDraft] = useState(null);       // value picked here, not yet confirmed
-  const draftTimer = useRef(null);
+interface DialProps {
+  label: string; value: number; unit: string; fmt: (v: number) => ReactNode;
+  min: number; max: number; step: number; quick: number[]; quickLabel: (v: number) => string;
+  onSet: (v: number) => void;
+}
+function Dial({ label, value, unit, fmt, min, max, step, quick, quickLabel, onSet }: DialProps) {
+  const [draft, setDraft] = useState<number | null>(null);       // value picked here, not yet confirmed
+  const draftTimer = useRef<ReturnType<typeof setTimeout>>();
   const send = useThrottled(onSet);
   // the logger confirmed it: drop the draft (adjusted while rendering)
   if (draft !== null && Math.abs(draft - value) < step / 2) setDraft(null);
   // set from the handlers; the logger may round or refuse, so show its value again after a while
-  const pick = n => {
+  const pick = (n: number) => {
     setDraft(n);
     clearTimeout(draftTimer.current);
     draftTimer.current = setTimeout(() => setDraft(null), DRAFT_MS);
   };
   const v = draft ?? value;
-  const nudge = d => { const n = Math.min(max, Math.max(min, v + d)); pick(n); onSet(n); };
+  const nudge = (d: number) => { const n = Math.min(max, Math.max(min, v + d)); pick(n); onSet(n); };
   return (
     <div className="dial">
       <div className="dial-now">
@@ -76,7 +83,7 @@ function Dial({ label, value, unit, fmt, min, max, step, quick, quickLabel, onSe
   );
 }
 
-export function ClimbBand({ ctl, ftp, follow }) {
+export function ClimbBand({ ctl, ftp, follow }: { ctl: ControlStatus; ftp: number; follow: string | null }) {
   const on = ctl.enabled;
   const live = on && ctl.state === 'on';
   const erg = ctl.mode === 'erg';
@@ -117,17 +124,18 @@ export function ClimbBand({ ctl, ftp, follow }) {
 // Workout steps with a grade (Grade="6" in a .zwo) set the trainer when the step starts, and in
 // ERG mode steps with a power target set the power. Changing it by hand holds until the next step.
 // The command is worked out while rendering; the effect only sends it to the trainer when it changes.
-function workoutCommand(ctl, at, recording) {
+function workoutCommand(ctl: ControlStatus | undefined, at: WorkoutAt | null, recording: boolean) {
   if (!recording || !ctl || !ctl.enabled || ctl.state !== 'on' || !at) return null;
   if (ctl.mode === 'erg' && at.target != null) {
     const w = Math.round(at.target / 5) * 5;            // ramps: a new target every 5 W
     return { key: `${at.i}:p${w}`, send: () => sendPower(w) };
   }
-  if (at.s.grade != null) return { key: `${at.i}:g${at.s.grade}`, send: () => sendGrade(at.s.grade) };
+  const grade = at.s.grade;
+  if (grade != null) return { key: `${at.i}:g${grade}`, send: () => sendGrade(grade) };
   return null;
 }
 
-export function useWorkoutControl({ ctl, at, recording }) {
+export function useWorkoutControl({ ctl, at, recording }: { ctl: ControlStatus | undefined; at: WorkoutAt | null; recording: boolean }) {
   const cmd = workoutCommand(ctl, at, recording);
   const key = cmd ? cmd.key : null;
   const send = useEvent(() => cmd && cmd.send());
@@ -135,7 +143,7 @@ export function useWorkoutControl({ ctl, at, recording }) {
 }
 
 // + / − keys: grade ±0.5 % (or ERG ±5 W) while control is on. Called from the app's key listener.
-export function controlKey(e, c) {
+export function controlKey(e: KeyboardEvent, c: ControlStatus | undefined) {
   if (!c || !c.enabled || c.state !== 'on') return;
   const d = e.key === '+' || e.key === '=' ? 1 : e.key === '-' || e.key === '_' ? -1 : 0;
   if (!d) return;

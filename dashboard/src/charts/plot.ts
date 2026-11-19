@@ -3,25 +3,68 @@
 // line and the planned workout go under the series, the "waiting" message over it.
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
-import { fmtT, cssVar } from '../util/ride.js';
+import { fmtT, cssVar } from '../util/ride';
+import type { Sample, SeriesKey } from '../types/feed';
+import type { PlanPoint } from '../types/workout';
+
+// One chart: which series, its colour token, y-axis rules and height.
+export interface ChartDef {
+  key: SeriesKey;
+  color: string;                                      // CSS custom property, e.g. '--power'
+  fill?: boolean;
+  min?: number;                                       // y-axis floor (default 0)
+  autoMin?: boolean;                                  // y floor follows the data (heart rate)
+  floorMax: number;                                   // y-axis top is at least this
+  ftpRef?: boolean;                                   // draw the FTP line
+  title: string;
+  name: string;
+  unit: string;
+  h: number;                                          // px
+  xaxis?: boolean;                                    // time labels under this chart
+}
+
+// What React hands the chart; the draw hooks read it when uPlot paints.
+export interface PlotMeta {
+  c: ChartDef;
+  laps: number[];
+  plan: PlanPoint[];
+  ftp: number;
+  x0: number;
+  x1: number;
+  ymin: number;
+  ymax: number;
+  step: number;
+  tol: (v: number) => number;                         // on-target band half-width
+  zoomable?: boolean;
+  zoomed?: boolean;
+  empty?: string | null;                              // message over an empty chart
+}
+
+export interface PlotHandlers {
+  hover(t: number | null, over?: HTMLDivElement, left?: number, top?: number): void;
+  zoom(lo: number, hi: number): void;
+  reset(): void;
+}
+
+interface Tokens { grid: string; muted: string; sec: string; surf: string; col: string }
 
 const FONT = '12px system-ui, sans-serif';
 const MIN_SPAN = 30;                                  // seconds: the closest zoom
 
-export function niceStep(range, n) {
+export function niceStep(range: number, n: number) {
   const raw = range / n, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
   return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
 }
 
 // Ride columns for uPlot, built once and appended to as the ride grows: the history is one
 // array that grows in place, so a full rebuild only happens when it is replaced or cleared.
-const cache = new WeakMap();
-export const KEYS = ['power_w', 'cadence_rpm', 'heart_rate_bpm', 'speed_kmh'];
-export function columns(hist) {
+export type Columns = { n: number; last: Sample | null; t: number[] } & Record<SeriesKey, (number | null)[]>;
+const cache = new WeakMap<Sample[], Columns>();
+export const KEYS: SeriesKey[] = ['power_w', 'cadence_rpm', 'heart_rate_bpm', 'speed_kmh'];
+export function columns(hist: Sample[]): Columns {
   let c = cache.get(hist);
   if (!c || c.n > hist.length || (c.n && hist[c.n - 1] !== c.last)) {
-    c = { n: 0, last: null, t: [] };
-    for (const k of KEYS) c[k] = [];
+    c = { n: 0, last: null, t: [], power_w: [], cadence_rpm: [], heart_rate_bpm: [], speed_kmh: [] };
     cache.set(hist, c);
   }
   for (let i = c.n; i < hist.length; i++) {
@@ -34,9 +77,9 @@ export function columns(hist) {
 }
 
 // Under the series: lap markers, FTP line, workout target band and line.
-function drawUnder(u, meta, tok) {
+function drawUnder(u: uPlot, meta: PlotMeta, tok: Tokens) {
   const { ctx: g, bbox: b } = u, pr = uPlot.pxRatio;
-  const X = v => u.valToPos(v, 'x', true), Y = v => u.valToPos(v, 'y', true);
+  const X = (v: number) => u.valToPos(v, 'x', true), Y = (v: number) => u.valToPos(v, 'y', true);
   const { x0, x1, ymin, c } = meta;
   g.save();
   g.beginPath(); g.rect(b.left, b.top, b.width, b.height); g.clip();
@@ -56,10 +99,10 @@ function drawUnder(u, meta, tok) {
     g.textAlign = 'left'; g.textBaseline = 'bottom'; g.fillText('FTP ' + meta.ftp, b.left + 4 * pr, y - 3 * pr);
   }
   g.setLineDash([]);
-  const cl = t => Math.min(Math.max(t, x0), x1);
+  const cl = (t: number) => Math.min(Math.max(t, x0), x1);
   for (const p of meta.plan) {
     if (p.t1 <= x0 || p.t0 > x1) continue;
-    const at = t => p.a + (p.b - p.a) * ((t - p.t0) / Math.max(1, p.t1 - p.t0));
+    const at = (t: number) => p.a + (p.b - p.a) * ((t - p.t0) / Math.max(1, p.t1 - p.t0));
     const ta = cl(p.t0), tb = cl(p.t1), va = at(ta), vb = at(tb), tol = meta.tol;
     g.beginPath();
     g.moveTo(X(ta), Y(va + tol(va))); g.lineTo(X(tb), Y(vb + tol(vb)));
@@ -71,7 +114,7 @@ function drawUnder(u, meta, tok) {
   g.restore();
 }
 
-function drawEmpty(u, meta, tok) {
+function drawEmpty(u: uPlot, meta: PlotMeta, tok: Tokens) {
   if (!meta.empty) return;
   const { ctx: g, bbox: b } = u, pr = uPlot.pxRatio;
   g.save();
@@ -82,10 +125,10 @@ function drawEmpty(u, meta, tok) {
 }
 
 // x ticks: a round step that gives as many labels as fit (at most 7)
-function xSplits(u, i, min, max) {
+function xSplits(u: uPlot, i: number, min: number, max: number) {
   const fit = Math.max(3, Math.min(7, Math.floor(u.bbox.width / uPlot.pxRatio / 64)));   // ~64 px per label
   const span = max - min, xs = [60, 120, 300, 600, 900, 1200, 1800, 3600, 7200].find(s => span / s <= fit) || 7200;
-  const out = [];
+  const out: number[] = [];
   // the last label stays clear of the right edge, where it would be cut off
   for (let t = Math.ceil(Math.max(0, min) / xs) * xs; t <= max - span * 0.04; t += xs) out.push(t);
   return out;
@@ -93,10 +136,10 @@ function xSplits(u, i, min, max) {
 
 // Pinch (two fingers) and trackpad gestures: zoom and pan the whole-ride view.
 // One finger keeps scrolling the page.
-function bindGestures(u, meta, on) {
+function bindGestures(u: uPlot, meta: PlotMeta, on: PlotHandlers) {
   const over = u.over;
   const span = () => [meta.x0, meta.x1];
-  const valAt = clientX => {
+  const valAt = (clientX: number) => {
     const r = over.getBoundingClientRect(), [a, b] = span();
     return [a + ((clientX - r.left) / r.width) * (b - a), (clientX - r.left) / r.width];
   };
@@ -114,8 +157,8 @@ function bindGestures(u, meta, on) {
     }
   }, { passive: false });
 
-  let pinch = null;
-  const mid = t => [(t[0].clientX + t[1].clientX) / 2, Math.abs(t[0].clientX - t[1].clientX) || 1];
+  let pinch: { v: number; f: number; d: number; w: number } | null = null;
+  const mid = (t: TouchList) => [(t[0].clientX + t[1].clientX) / 2, Math.abs(t[0].clientX - t[1].clientX) || 1];
   over.addEventListener('touchstart', e => {
     if (!meta.zoomable || e.touches.length !== 2) { pinch = null; return; }
     const [cx, d] = mid(e.touches), [v, f] = valAt(cx);
@@ -133,10 +176,10 @@ function bindGestures(u, meta, on) {
 }
 
 // `on`: { hover(t, over, left, top) | hover(null), zoom(lo, hi), reset() }
-export function createPlot(node, c, meta, on) {
-  const tok = { grid: cssVar('--grid'), muted: cssVar('--text-muted'), sec: cssVar('--text-secondary'),
+export function createPlot(node: HTMLDivElement, c: ChartDef, meta: PlotMeta, on: PlotHandlers): uPlot {
+  const tok: Tokens = { grid: cssVar('--grid'), muted: cssVar('--text-muted'), sec: cssVar('--text-secondary'),
                 surf: cssVar('--surface-1'), col: cssVar(c.color) };
-  const opts = {
+  const opts: uPlot.Options = {
     width: node.clientWidth || 300, height: c.h,
     padding: [8, 10, c.xaxis ? 0 : 6, 0],
     legend: { show: false },
@@ -153,7 +196,7 @@ export function createPlot(node, c, meta, on) {
         ticks: { show: false }, splits: xSplits, values: (u, v) => v.map(fmtT) },
       { stroke: tok.muted, font: FONT, size: 40, gap: 6, ticks: { show: false },
         grid: { stroke: tok.grid, width: 1 },
-        splits: () => { const out = []; for (let v = meta.ymin; v <= meta.ymax + 1e-9; v += meta.step) out.push(v); return out; },
+        splits: () => { const out: number[] = []; for (let v = meta.ymin; v <= meta.ymax + 1e-9; v += meta.step) out.push(v); return out; },
         values: (u, v) => v.map(Math.round) },
     ],
     cursor: {

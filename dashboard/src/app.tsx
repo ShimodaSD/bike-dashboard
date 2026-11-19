@@ -13,26 +13,41 @@
 // (hooks/feed.js) and settings in localStorage (hooks/stored.js). Everything else is derived while
 // rendering. Effects are kept for real outside systems only: feeding the uPlot charts, document key
 // and focus handling, the device scan while that panel is open, and the trainer / audio.
-import React, { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { memo, useState, useEffect, useRef, useMemo, useCallback, type CSSProperties, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { WorkoutBand, WorkoutSettings, workoutAt } from './workout/workout.jsx';
-import { ClimbBand, useWorkoutControl, controlKey } from './control/climb.jsx';
-import { useLiveFeed } from './hooks/feed.js';
-import { useStored } from './hooks/stored.js';
-import { useArmed, useEvent } from './hooks/hooks.js';
-import { ZONES, nz, fmtT, zoneOf } from './util/ride.js';
-import { Charts } from './charts/charts.jsx';
+import { WorkoutBand, WorkoutSettings, workoutAt } from './workout/workout';
+import { ClimbBand, useWorkoutControl, controlKey } from './control/climb';
+import { useLiveFeed, type LiveNow, type RecentPower } from './hooks/feed';
+import { useStored } from './hooks/stored';
+import { useArmed, useEvent } from './hooks/hooks';
+import { ZONES, nz, fmtT, zoneOf } from './util/ride';
+import { Charts } from './charts/charts';
+import type { DeviceChoice, DeviceKind, DeviceRole, FoundDevice, HrState, HrStatus, LiveValues, RideState,
+  RideStatus, Sample, ScanStatus, Status, TrainerState } from './types/feed';
+import type { Workout } from './types/workout';
+import type { WorkoutSettingsProps } from './workout/workout';
+
+type Mode = RideState;                   // what the page shows: ready (preview), recording, finished
+type Panel = 'devices' | 'settings';
+type LiveRate = 'auto' | 'fast' | 'saver';
+// Which Download / Send buttons were used, for which .fit
+interface Sent { fit: string | null; to: string[] }
 
 // ------------------------------------------------------------------ constants & helpers
 
-const CSV_COLS = ['t', 'timestamp_utc', 'lap', 'power_w', 'cadence_rpm', 'speed_kmh',
+const CSV_COLS: (keyof Sample)[] = ['t', 'timestamp_utc', 'lap', 'power_w', 'cadence_rpm', 'speed_kmh',
                   'heart_rate_bpm', 'distance_m', 'energy_kj', 'grade_pct'];
 
-const r0 = v => (nz(v) ? Math.round(v) : '–');
+const r0 = (v: number | null | undefined) => (nz(v) ? Math.round(v) : '–');
 
 // Summary over a slice of 1 Hz samples. `before` = the sample just before the slice (for distance/kJ deltas).
-function stats(a, ftp, before) {
-  const out = { n: a.length, moving: 0, avgP: null, np: null, maxP: null, avgCad: null, avgSpd: null,
+interface RideStats {
+  n: number; moving: number; avgP: number | null; np: number | null; maxP: number | null;
+  avgCad: number | null; avgSpd: number | null; avgHr: number | null; maxHr: number | null;
+  dist: number; kj: number; tiz: number[];        // seconds in each power zone
+}
+function stats(a: Sample[], ftp: number, before: Sample | null): RideStats {
+  const out: RideStats = { n: a.length, moving: 0, avgP: null, np: null, maxP: null, avgCad: null, avgSpd: null,
                 avgHr: null, maxHr: null, dist: 0, kj: 0, tiz: new Array(7).fill(0) };
   if (!a.length) return out;
   let sp = 0, mc = 0, sc = 0, cc = 0, ss = 0, sn = 0, sh = 0, hn = 0, mh = 0, mp = 0;
@@ -65,14 +80,15 @@ function stats(a, ftp, before) {
 // Instant numbers older than this are ignored (trainer stopped sending).
 const FRESH_MS = 2500;
 
-const post = path => fetch(path, { method: 'POST' }).catch(() => {});
+const post = (path: string) => fetch(path, { method: 'POST' }).catch(() => {});
 // Touch screens say "Tap", mice say "Click".
 const PRESS = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches ? 'Tap' : 'Click';
 const postLap = () => post('/lap');
 
 // ------------------------------------------------------------------ header
 // [dot colour, full label, short label for phones]
-const STATUS = {
+type PillRow<S> = [col: string, long: (s: S) => string, short: string];
+const STATUS: Record<TrainerState, PillRow<Partial<Status>>> = {
   connected:    ['--good', s => `Trainer · ${s.device || 'connected'}`, 'Trainer'],
   demo:         ['--power', s => s.device ? `Demo · ${s.device.replace(/\s*\(demo\)$/i, '')}` : 'Demo · simulated data', 'Demo'],
   searching:    ['--warning', s => s.device ? `Looking for ${s.device}…` : 'Searching for trainer…', 'Searching…'],
@@ -82,19 +98,19 @@ const STATUS = {
 };
 
 // Separate heart-rate device (Garmin watch broadcasting HR, chest strap ...)
-const HR_STATUS = {
+const HR_STATUS: Record<HrState, PillRow<Partial<HrStatus>>> = {
   connected:    ['--good', h => `HR · ${h.device || 'connected'}`, 'HR'],
   searching:    ['--warning', h => h.device ? `HR · looking for ${h.device}` : 'HR · looking for watch or strap', 'HR…'],
   reconnecting: ['--warning', h => `HR · ${h.device || 'device'} lost, reconnecting`, 'HR lost'],
   off:          ['--text-muted', () => 'HR · off', 'HR off'],
 };
-const Pill = ({ col, long, short }) => (
+const Pill = ({ col, long, short }: { col: string; long: string; short: string }) => (
   <span className="pill"><span className="dot" style={{ background: `var(${col})` }} />
     <span className="long">{long}</span><span className="short" aria-hidden="true">{short}</span></span>);
 
 // Buttons that need a second press: useArmed in hooks/hooks.js.
 // Armed look: red fill plus a bar that drains over the 4 s, so the timeout is visible.
-const armedCls = (armed, base = '') => (armed ? `${base} danger armed`.trim() : base);
+const armedCls = (armed: boolean, base = '') => (armed ? `${base} danger armed`.trim() : base);
 
 // Sprint b logo: an italic b whose stem is the tallest bar of a rising chart and whose bowl is a wheel.
 const Logo = () => (
@@ -109,14 +125,18 @@ const Logo = () => (
   </svg>
 );
 
-const Kbd = ({ k }) => <kbd aria-hidden="true">{k}</kbd>;
+const Kbd = ({ k }: { k: string }) => <kbd aria-hidden="true">{k}</kbd>;
 
-function Header({ status, ride, act, panel, toggle }) {
+interface Actions { finishArmed: boolean; startArmed: boolean; lap: () => void; finish: () => void; start: () => void }
+interface HeaderProps {
+  status: Partial<Status>; ride: Partial<RideStatus>; act: Actions; panel: Panel | null; toggle: (p: Panel) => void;
+}
+function Header({ status, ride, act, panel, toggle }: HeaderProps) {
   const settingsOpen = panel === 'settings', devicesOpen = panel === 'devices';
   const recording = ride.state === 'recording';
-  const [col, txt, short] = STATUS[status.state] || ['--text-muted', () => status.state || 'Connecting…', 'Connecting…'];
-  const hr = status.hr || {};
-  const hrPill = HR_STATUS[hr.state];
+  const [col, txt, short] = (status.state && STATUS[status.state]) || ['--text-muted', () => status.state || 'Connecting…', 'Connecting…'];
+  const hr: Partial<HrStatus> = status.hr || {};
+  const hrPill = hr.state && HR_STATUS[hr.state];
   return (
     <header>
       <h1><Logo />Bike <span>Live training</span></h1>
@@ -144,13 +164,13 @@ function Header({ status, ride, act, panel, toggle }) {
 // ------------------------------------------------------------------ drawer: Devices or Settings, one at a time
 // Floats over the page instead of pushing it down, so the live numbers never move mid-ride.
 // Not a modal: the page behind keeps updating and stays usable. Esc or Close puts focus back.
-function Drawer({ id, title, onClose, children }) {
-  const ref = useRef(null);
+function Drawer({ id, title, onClose, children }: { id: string; title: string; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLElement>(null);
   const close = useEvent(onClose);
   useEffect(() => {      // focus moves in while open and back out on close; Esc works anywhere on the page
-    const back = document.activeElement;
-    ref.current.focus();
-    const k = e => { if (e.key === 'Escape') close(); };
+    const back = document.activeElement as HTMLElement | null;
+    ref.current?.focus();
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
     document.addEventListener('keydown', k);
     return () => { document.removeEventListener('keydown', k); if (back && back.focus) back.focus(); };
   }, [close]);
@@ -168,7 +188,7 @@ function Drawer({ id, title, onClose, children }) {
 // ------------------------------------------------------------------ settings
 // The draft is what is typed; it is committed on blur / Enter. Keyed by the saved value, so a new
 // FTP or weight (from here or another tab) starts a fresh draft instead of an effect copying it in.
-function FtpField({ ftp, setFtp }) {
+function FtpField({ ftp, setFtp }: { ftp: number; setFtp: (v: number) => void }) {
   const [ftpDraft, setFtpDraft] = useState(String(ftp));
   const [ftpErr, setFtpErr] = useState(false);
   const commitFtp = () => {
@@ -190,7 +210,7 @@ function FtpField({ ftp, setFtp }) {
   );
 }
 
-function WeightField({ kg, setKg }) {
+function WeightField({ kg, setKg }: { kg: number | null; setKg: (v: number | null) => void }) {
   // typed as text so a half-typed "7" or a comma ("72,5") isn't wiped while typing
   const [kgDraft, setKgDraft] = useState(kg == null ? '' : String(kg));
   const [kgErr, setKgErr] = useState(false);
@@ -214,7 +234,12 @@ function WeightField({ kg, setKg }) {
   );
 }
 
-function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout }) {
+interface SettingsProps {
+  ftp: number; setFtp: (v: number) => void; kg: number | null; setKg: (v: number | null) => void;
+  onCsv: () => void; canCsv: boolean; smooth: number; setSmooth: (v: number) => void;
+  liveRate: LiveRate; setLiveRate: (v: LiveRate) => void; recording: boolean; workout: WorkoutSettingsProps;
+}
+function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout }: SettingsProps) {
   return (
     <section className="settings">
       <FtpField key={ftp} ftp={ftp} setFtp={setFtp} />
@@ -233,7 +258,7 @@ function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, li
       <div className="field">
         <label htmlFor="liverate">Live updates</label>
         <div className="inline">
-          <select id="liverate" value={liveRate} onChange={e => setLiveRate(e.target.value)}>
+          <select id="liverate" value={liveRate} onChange={e => setLiveRate(e.target.value as LiveRate)}>
             <option value="auto">Automatic</option>
             <option value="fast">Instant</option>
             <option value="saver">Battery saver (2 per second)</option>
@@ -270,7 +295,7 @@ function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, li
 }
 
 // Clearing would throw away the ride in progress, so it waits until the ride is finished.
-function ClearData({ recording }) {
+function ClearData({ recording }: { recording: boolean }) {
   const [armed, press] = useArmed(recording);
   return <>
     <div className="inline"><button className={armedCls(armed)} disabled={recording} onClick={() => press(() => post('/clear'))}>
@@ -290,25 +315,26 @@ function StopLogger() {
 }
 
 // ------------------------------------------------------------------ devices (disclosure): pick trainer + HR source
-const ROLE = {
+const ROLE: Record<DeviceRole, { title: string; any: string; tip: ReactNode }> = {
   trainer: { title: 'Trainer', any: 'Any smart trainer',
              tip: 'Pedal to wake the trainer. Close Zwift and the ThinkRider app first: it takes one connection at a time.' },
   hr:      { title: 'Heart rate', any: 'Any heart-rate broadcast',
              tip: <>On the Forerunner turn on <b>Broadcast Heart Rate</b> (hold UP › Settings › Sensors &amp; Accessories › Wrist Heart Rate).</> },
 };
-const KIND = { trainer: 'Smart trainer', hr: 'Heart-rate broadcast', other: 'Other device' };
-const useUrl = (role, d) => `/devices/use?role=${role}&address=${encodeURIComponent(d.address)}&name=${encodeURIComponent(d.name || '')}`;
+const KIND: Record<DeviceKind, string> = { trainer: 'Smart trainer', hr: 'Heart-rate broadcast', other: 'Other device' };
+const useUrl = (role: DeviceRole, d: FoundDevice) => `/devices/use?role=${role}&address=${encodeURIComponent(d.address)}&name=${encodeURIComponent(d.name || '')}`;
 
-function Bars({ rssi }) {
+function Bars({ rssi }: { rssi: number | null }) {
   const n = rssi == null ? 0 : rssi >= -65 ? 3 : rssi >= -80 ? 2 : 1;
   const word = ['Unknown', 'Weak', 'Good', 'Strong'][n];
   return <span className="bars" role="img" aria-label={`Signal ${word}`} title={rssi == null ? word : `${word} signal (${rssi} dBm)`}>
     {[1, 2, 3].map(i => <i key={i} className={i <= n ? 'on' : ''} />)}</span>;
 }
 
-function slotInfo(role, status) {
-  const s = role === 'trainer' ? status : (status.hr || {});
-  const choice = (status.devices || {})[role] || { mode: 'auto' };
+interface SlotInfo { dot: string; name: string | null | undefined; text: string; off?: boolean; on?: boolean }
+function slotInfo(role: DeviceRole, status: Partial<Status>): SlotInfo {
+  const s: { state?: TrainerState | HrState; device?: string | null } = role === 'trainer' ? status : (status.hr || {});
+  const choice: DeviceChoice = status.devices?.[role] || { mode: 'auto' };
   const name = s.device || choice.name || choice.address;
   if (choice.mode === 'off' || s.state === 'off')
     return { dot: '--text-muted', name: choice.name || 'None', off: true,
@@ -321,9 +347,9 @@ function slotInfo(role, status) {
   return { dot: '--warning', name: ROLE[role].any, text: 'Looking… or pick one below.' };
 }
 
-function Slot({ role, status, recording }) {
+function Slot({ role, status, recording }: { role: DeviceRole; status: Partial<Status>; recording: boolean }) {
   const info = slotInfo(role, status);
-  const choice = (status.devices || {})[role] || {};
+  const choice: Partial<DeviceChoice> = status.devices?.[role] || {};
   const confirm = role === 'trainer' && recording && info.on;      // dropping the trainer pauses the ride
   const [armed, press] = useArmed(info.text);
   const off = () => confirm ? press(() => post(`/devices/off?role=${role}`)) : post(`/devices/off?role=${role}`);
@@ -345,9 +371,10 @@ function Slot({ role, status, recording }) {
   );
 }
 
-function DeviceRow({ d, choice }) {
-  const inUse = ['trainer', 'hr'].find(r => (choice[r] || {}).mode !== 'off' && (choice[r] || {}).address === d.address);
-  const roles = d.kind === 'other' ? ['trainer', 'hr'] : [d.kind];
+const ROLES: DeviceRole[] = ['trainer', 'hr'];
+function DeviceRow({ d, choice }: { d: FoundDevice; choice: Partial<Record<DeviceRole, DeviceChoice>> }) {
+  const inUse = ROLES.find(r => (choice[r] || {}).mode !== 'off' && (choice[r] || {}).address === d.address);
+  const roles = d.kind === 'other' ? ROLES : [d.kind];
   return (
     <li>
       <Bars rssi={d.rssi} />
@@ -362,8 +389,8 @@ function DeviceRow({ d, choice }) {
   );
 }
 
-function Devices({ status, recording }) {
-  const scan = status.scan || {};
+function Devices({ status, recording }: { status: Partial<Status>; recording: boolean }) {
+  const scan: Partial<ScanStatus> = status.scan || {};
   const choice = status.devices || {};
   const [showOther, setShowOther] = useState(false);
   useEffect(() => { post('/devices/scan'); }, []);   // a short Bluetooth scan while the panel is open (it mounts on open)
@@ -398,7 +425,11 @@ function Devices({ status, recording }) {
 }
 
 // ------------------------------------------------------------------ tiles
-function Tile({ label, keyColor, value, unit, sub, className = '', badge, style, children }) {
+interface TileProps {
+  label: ReactNode; keyColor?: string; value: ReactNode; unit?: string; sub?: ReactNode;
+  className?: string; badge?: ReactNode; style?: CSSProperties; children?: ReactNode;
+}
+function Tile({ label, keyColor, value, unit, sub, className = '', badge, style, children }: TileProps) {
   return (
     <div className={'tile ' + className} style={style}>
       <div className="label">{keyColor && <span className="key" style={{ background: `var(${keyColor})` }} />}{label}{badge}</div>
@@ -410,34 +441,38 @@ function Tile({ label, keyColor, value, unit, sub, className = '', badge, style,
 }
 
 // Best average power over any `sec`-second stretch of the ride (null if the ride is shorter).
-function bestPower(h, sec) {
+function bestPower(h: Sample[], sec: number) {
   if (h.length < sec) return null;
   let sum = 0, best = 0;
   h.forEach((s, i) => { sum += s.power_w || 0; if (i >= sec) sum -= h[i - sec].power_w || 0; if (i >= sec - 1 && sum > best) best = sum; });
   return best / sec;
 }
-const tssOf = (n, np, ftp) => (np ? ((n * np * (np / ftp)) / (ftp * 3600)) * 100 : null);
-const fmtTss = t => (t === null ? '–' : t < 10 ? t.toFixed(1) : Math.round(t));
+const tssOf = (n: number, np: number | null, ftp: number) => (np ? ((n * np * (np / ftp)) / (ftp * 3600)) * 100 : null);
+const fmtTss = (t: number | null) => (t === null ? '–' : t < 10 ? t.toFixed(1) : Math.round(t));
 
-const avg3 = h => { const w = h.slice(-3); return w.length ? w.reduce((t, s) => t + (s.power_w || 0), 0) / w.length : null; };
+const avg3 = (h: LiveValues[]) => { const w = h.slice(-3); return w.length ? w.reduce((t, s) => t + (s.power_w || 0), 0) / w.length : null; };
 
 // Recording: live ride.  Ready: live preview (nothing saved).  Finished: the ride's summary.
 // Power shown live: the latest packet (instant) or the mean of the last `smooth` seconds of packets.
-function livePower(now, recent, smooth) {
+function livePower(now: LiveNow, recent: RecentPower[], smooth: number) {
   if (!smooth) return now.power_w;
   const w = recent.filter(x => now.at - x.at < smooth * 1000);
   return w.length ? w.reduce((t, x) => t + x.p, 0) / w.length : now.power_w;
 }
 
-function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth }) {
+interface HeroProps {
+  hist: Sample[]; laps: number[]; st: RideStats; ftp: number; preview: LiveValues | null; mode: Mode;
+  now: LiveNow | null; recent: RecentPower[]; smooth: number;
+}
+function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth }: HeroProps) {
   const done = mode === 'finished' && hist.length > 0;
   const fresh = now && Date.now() - now.at < FRESH_MS;
-  const live = fresh ? [now] : mode === 'recording' ? hist : preview ? [preview] : [];
+  const live: LiveValues[] = fresh ? [now] : mode === 'recording' ? hist : preview ? [preview] : [];
   const last = live[live.length - 1];
   const p = done ? st.avgP : fresh ? livePower(now, recent, smooth) : avg3(live);
-  const zi = p > 0 ? zoneOf(p, ftp) : -1;
+  const zi = p != null && p > 0 ? zoneOf(p, ftp) : -1;
   const z = ZONES[zi];
-  const zoneTxt = p > 0 ? <><b className="zn">{z.n}</b><span className="zrest"><b>{z.name}</b> · {Math.round((p / ftp) * 100)}% FTP</span></> : null;
+  const zoneTxt = p != null && p > 0 ? <><b className="zn">{z.n}</b><span className="zrest"><b>{z.name}</b> · {Math.round((p / ftp) * 100)}% FTP</span></> : null;
   // current lap at a glance: number, time and average power so far
   const lapStart = laps[laps.length - 1] || 0, lapRows = hist.slice(lapStart);
   const lapAvg = lapRows.length ? lapRows.reduce((t, s) => t + (s.power_w || 0), 0) / lapRows.length : null;
@@ -446,9 +481,9 @@ function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth }) {
                   : null;   // the strip above already says Preview
   return (
     <section className={'hero ' + mode}>
-      <Tile className={'power' + (zi >= 0 ? ' zoned' : '')} style={zi >= 0 ? { '--zc': `var(--z${zi + 1})` } : undefined} label={done ? 'Avg power · ride' : smooth ? `Power · ${smooth} s` : 'Power'} keyColor="--power" value={r0(p)} unit="W"
+      <Tile className={'power' + (zi >= 0 ? ' zoned' : '')} style={zi >= 0 ? ({ '--zc': `var(--z${zi + 1})` } as CSSProperties) : undefined} label={done ? 'Avg power · ride' : smooth ? `Power · ${smooth} s` : 'Power'} keyColor="--power" value={r0(p)} unit="W"
             sub={done ? <>{zoneTxt}{last ? <span className="live-now">now {r0(avg3(live))} W</span> : null}</>
-                      : !last ? '' : p > 0 ? zoneTxt : 'Not pedaling'}>
+                      : !last ? '' : p != null && p > 0 ? zoneTxt : 'Not pedaling'}>
         <div className="zonebar" aria-hidden="true">
           {ZONES.map((zz, i) => <span key={zz.n} className={i === zi ? 'on' : ''} style={{ background: `var(--z${i + 1})` }} />)}
         </div>
@@ -475,7 +510,10 @@ function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth }) {
   );
 }
 
-const Stats = memo(function Stats({ hist, st, ftp, kg, more, setMore, mode }) {
+interface StatsProps {
+  hist: Sample[]; st: RideStats; ftp: number; kg: number | null; more: boolean; setMore: (v: boolean) => void; mode: Mode;
+}
+const Stats = memo(function Stats({ hist, st, ftp, kg, more, setMore, mode }: StatsProps) {
   const done = mode === 'finished';
   const p3 = mode === 'recording' ? avg3(hist) || 0 : st.avgP || 0;
   const IF = st.np ? st.np / ftp : null, tss = tssOf(hist.length, st.np, ftp);
@@ -509,7 +547,7 @@ const Stats = memo(function Stats({ hist, st, ftp, kg, more, setMore, mode }) {
 });
 
 // ------------------------------------------------------------------ side panels
-const TimeInZone = memo(function TimeInZone({ st, ftp }) {
+const TimeInZone = memo(function TimeInZone({ st, ftp }: { st: RideStats; ftp: number }) {
   const tot = st.tiz.reduce((a, b) => a + b, 0) || 1, mx = Math.max(...st.tiz, 1);
   return (
     <div className="panel">
@@ -530,7 +568,11 @@ const TimeInZone = memo(function TimeInZone({ st, ftp }) {
   );
 });
 
-const Laps = memo(function Laps({ hist, laps, ftp, recording }) {   // `version` prop: see Charts
+interface LapsProps {
+  hist: Sample[]; laps: number[]; ftp: number; recording: boolean;
+  version: number;                                  // not read: a new second re-renders the memo (see Charts)
+}
+const Laps = memo(function Laps({ hist, laps, ftp, recording }: LapsProps) {
   const rows = laps.map((start, i) => {
     const end = i + 1 < laps.length ? laps[i + 1] : hist.length;
     return { i, cur: recording && i === laps.length - 1, ls: stats(hist.slice(start, end), ftp, start > 0 ? hist[start - 1] : null) };
@@ -542,7 +584,7 @@ const Laps = memo(function Laps({ hist, laps, ftp, recording }) {   // `version`
         <table>
           <thead><tr><th>#</th><th>Time</th><th>Avg W</th><th>NP</th><th>rpm</th><th>bpm</th><th>km</th></tr></thead>
           <tbody>
-            {!hist.length ? <tr><td colSpan="7" className="empty">Laps appear here once you press Start.</td></tr> :
+            {!hist.length ? <tr><td colSpan={7} className="empty">Laps appear here once you press Start.</td></tr> :
               rows.map(({ i, cur, ls }) => (
                 <tr key={i} className={cur ? 'current' : ''}>
                   <td>{i + 1}{cur && <span className="now">now</span>}</td><td>{fmtT(ls.n)}</td><td>{r0(ls.avgP)}</td><td>{r0(ls.np)}</td>
@@ -563,16 +605,23 @@ const Check = () => <svg className="check" width="14" height="14" viewBox="0 0 1
 
 // Download / Send buttons. Once used for this ride they show a check and drop their fill,
 // so the finished screen tells you what you already did.
-function SendTo({ ride, href, label, className = '', used, onDownload }) {
-  return <a className={'btn ' + (used ? 'used' : className)} href="/ride.fit" download={ride.fit}
+interface SendToProps {
+  ride: Partial<RideStatus>; href?: string; label: string; className?: string; used: boolean; onDownload: () => void;
+}
+function SendTo({ ride, href, label, className = '', used, onDownload }: SendToProps) {
+  return <a className={'btn ' + (used ? 'used' : className)} href="/ride.fit" download={ride.fit ?? undefined}
             aria-label={used ? `${label} (done)` : undefined}
             onClick={() => { onDownload(); if (href) window.open(href, '_blank', 'noopener'); }}>{used && <Check />}{label}</a>;
 }
 
 // ------------------------------------------------------------------ ride strip: one band, same height in every state
-function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownload }) {
+interface RideStripProps {
+  ride: Partial<RideStatus>; seconds: number; startArmed: boolean; lapFlash: number; sent: Sent;
+  onDownload: (...to: string[]) => void;
+}
+function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownload }: RideStripProps) {
   const dir = ride.dir ? `${ride.dir}/` : 'the ride folder';
-  let cls = 'ready', body;
+  let cls = 'ready', body: ReactNode;
   if (ride.state === 'recording') {
     cls = 'rec';
     body = <><span className="badge rec">REC</span>
@@ -580,7 +629,7 @@ function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownload }) {
       {lapFlash ? <span className="flash">Lap {lapFlash} started</span> : null}</>;
   } else if (ride.state === 'finished' && ride.fit) {
     cls = 'done';
-    const used = sent.fit === ride.fit ? sent.to : [];
+    const used: string[] = sent.fit === ride.fit ? sent.to : [];
     body = <>
       <span className="badge done">Saved</span>
       <span className="what">Saved on this computer · {fmtT(seconds)}<small>{ride.fit} in {dir}</small></span>
@@ -606,7 +655,7 @@ function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownload }) {
 }
 
 // ------------------------------------------------------------------ app
-function exportCsv(hist) {
+function exportCsv(hist: Sample[]) {
   const csv = [CSV_COLS.join(',')].concat(hist.map(s => CSV_COLS.map(c => s[c] ?? '').join(','))).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
@@ -616,30 +665,30 @@ function exportCsv(hist) {
 
 // Phones and tablets get the battery-saver live rate by default. Read once, like PRESS.
 const TOUCH = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
-const NOT_SENT = { fit: null, to: [] };
+const NOT_SENT: Sent = { fit: null, to: [] };
 const LAP_FLASH_S = 3;                               // "Lap N started" for the lap's first seconds
 
 function App() {
   const [smooth, setSmooth] = useStored('powerSmooth', 0);
-  const [liveRate, setLiveRate] = useStored('liveRate', 'auto');
+  const [liveRate, setLiveRate] = useStored<LiveRate>('liveRate', 'auto');
   const rate = liveRate === 'saver' || (liveRate === 'auto' && TOUCH) ? 2 : 0;
   const { hist, laps, status, online, version, preview, now, recent } = useLiveFeed(rate);
-  const ride = status.ride || {};
-  const mode = ride.state === 'recording' ? 'recording' : ride.state === 'finished' ? 'finished' : 'ready';
+  const ride: Partial<RideStatus> = status.ride || {};
+  const mode: Mode = ride.state === 'recording' ? 'recording' : ride.state === 'finished' ? 'finished' : 'ready';
   const [ftp, setFtp] = useStored('ftp', 200);    // FTP and weight stay in this browser
-  const [kg, setKg] = useStored('kg', null);
+  const [kg, setKg] = useStored<number | null>('kg', null);
   const [win, setWin] = useStored('win', 1200);
   const [more, setMore] = useStored('moreStats', false);
-  const [wo, setWo] = useStored('workout', null);
+  const [wo, setWo] = useStored<Workout | null>('workout', null);
   const [woSound, setWoSound] = useStored('workoutSound', true);
-  const [sent, setSent] = useStored('sent', NOT_SENT);   // which buttons were used for which .fit
+  const [sent, setSent] = useStored<Sent | null>('sent', NOT_SENT);   // which buttons were used for which .fit
 
-  const [panel, setPanel] = useState(null);           // 'devices' | 'settings' | null
-  const toggle = p => setPanel(o => (o === p ? null : p));
+  const [panel, setPanel] = useState<Panel | null>(null);
+  const toggle = (p: Panel) => setPanel(o => (o === p ? null : p));
   const closePanel = useCallback(() => setPanel(null), []);
   // Adjusted while rendering, when the logger's answer arrives (no effect, no extra paint):
   // open the device panel once when no trainer is remembered yet (or it was turned off) ...
-  const devChoice = (status.devices || {}).trainer;
+  const devChoice = status.devices?.trainer;
   const [askedDevices, setAskedDevices] = useState(false);
   if (devChoice && !askedDevices) {
     setAskedDevices(true);
@@ -661,7 +710,7 @@ function App() {
   // the finished ride is "unsaved" until its .FIT was downloaded from here
   const unsaved = mode === 'finished' && ride.fit && !(sent && sent.fit === ride.fit && sent.to.length);
   // Send to… also downloads the file, so it marks Download .FIT as done too
-  const markSent = (...to) => setSent(s => ({ fit: ride.fit, to: [...new Set([...(s && s.fit === ride.fit ? s.to : []), ...to])] }));
+  const markSent = (...to: string[]) => setSent(s => ({ fit: ride.fit ?? null, to: [...new Set([...(s && s.fit === ride.fit ? s.to : []), ...to])] }));
 
   // The ride state on <html> (for CSS), and back to the top when a ride finishes.
   const lastMode = useRef(mode);
@@ -671,7 +720,7 @@ function App() {
     lastMode.current = mode;
   }, [mode]);
 
-  const act = {
+  const act: Actions = {
     finishArmed, startArmed,
     lap: postLap,
     finish: () => pressFinish(() => post('/finish')),
@@ -688,8 +737,8 @@ function App() {
 
   // Keys: S start, L lap, F finish, − / + grade or ERG power. One document listener for the
   // app's lifetime; useEvent lets it see the current ride and control state.
-  const onKey = useEvent(e => {
-    if (e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  const onKey = useEvent((e: KeyboardEvent) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
     const key = e.key.toLowerCase();
     if (key === 'l' && mode === 'recording') act.lap();
     else if (key === 'f' && mode === 'recording') act.finish();
@@ -737,4 +786,4 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')!).render(<App />);
