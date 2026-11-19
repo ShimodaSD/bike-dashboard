@@ -410,3 +410,42 @@ td .now { font-size: 11px; font-weight: 600; color: var(--rec-text); margin-left
   .seg { margin-left: 0; }
   .climb-foot .keys { display: none; }
 }
+
+/* ---------------- FTP test: band over the workout while the test runs, then its result */
+.strip .ftp-start { margin-left: auto; }
+.ftptest { display: flex; align-items: center; gap: 8px 22px; flex-wrap: wrap; min-height: 56px; margin-bottom: 12px;
+           padding: 10px 16px; border-radius: 12px; background: var(--surface-1); border: 1px solid var(--border);
+           color: var(--text-secondary); font-size: 14px; }
+.ftptest.test { border-color: var(--power); box-shadow: inset 0 0 0 1px var(--power); }
+.ftptest.done { background: var(--done-tint); border-color: #2c5a25; }
+.ftptest b { color: var(--text-primary); }
+.ftptest .ft-label { display: block; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+.ftptest .ft-stat b { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.ftptest small { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
+.ftptest .ft-msg { flex: 1 1 260px; }
+.ftptest .ft-stop { margin-left: auto; }
+.ftptest .ft-result { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 0 12px; }
+.ftptest .ft-result .ft-label { grid-column: 1 / -1; color: var(--done-text); }
+.ftptest .ft-big { font-size: 40px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.ftptest .ft-sub { color: var(--text-secondary); }
+.ftptest .ft-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.ftptest .ft-note { margin-left: auto; color: var(--done-text); font-weight: 600; }
+.ftptest .ft-hint { flex-basis: 100%; font-size: 13px; color: var(--text-muted); }
+.ftp-history { list-style: none; margin: 10px 0 0; padding: 0; border-top: 1px solid var(--border); }
+.ftp-history li { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "ftp act" "when act";
+                   align-items: center; gap: 0 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.ftp-history .fh-when { grid-area: when; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.ftp-history .fh-ftp { grid-area: ftp; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.ftp-history .fh-ftp b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.ftp-history .fh-ftp small { font-size: 12px; color: var(--text-muted); }
+.ftp-history .fh-act { grid-area: act; display: flex; gap: 6px; align-items: center; }
+.ftp-history .fh-act button { padding-left: 12px; padding-right: 12px; }
+.ftp-history + button.quiet { margin-top: 6px; }
+@media (max-width: 560px) {
+  .ftptest { gap: 6px 16px; padding: 10px 12px; }
+  .ftptest .ft-stat b { font-size: 24px; }
+  .ftptest .ft-msg { flex-basis: 100%; }
+  .ftptest.test .ft-msg { display: none; }
+  .ftptest .ft-actions, .ftptest .ft-note { margin-left: 0; }
+  .strip .ftp-start { margin-left: 0; }
+}

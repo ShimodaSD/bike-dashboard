@@ -74,6 +74,42 @@ export interface ControlStatus {
   power_range: [number, number];
 }
 
+// FTP test (logger/ftp_test.py). Steps: lo / hi = power target as a fraction of FTP, null = no target.
+export interface FtpStep {
+  name: string;
+  dur: number;                       // s
+  lo: number | null;
+  hi: number | null;
+  test?: boolean;                    // the 20 minutes that set the FTP
+}
+
+export interface FtpResult {
+  id: string;
+  date: string;                      // local time, ISO
+  ftp: number;                       // W, 95 % of avg_w
+  avg_w: number;                     // 20 min average power
+  max_w?: number;
+  avg_hr?: number | null;
+  max_hr?: number | null;
+  avg_cad?: number | null;
+  ftp_before?: number | null;        // the dashboard's FTP when the test started
+  ride?: string | null;              // ride folder
+}
+
+export interface FtpTestRun {
+  state: 'running' | 'done' | 'stopped';
+  t0: number;                        // ride second the test started at
+  ftp_before: number | null;
+  result: FtpResult | null;          // set when done (null if the 20 min had no power)
+}
+
+export interface FtpStatus {
+  test: FtpTestRun | null;
+  results: FtpResult[];              // newest first, kept in config/ftp_tests.json
+  protocol: FtpStep[];
+  factor: number;                    // 0.95
+}
+
 export interface Status {
   state: TrainerState;
   connected: boolean;
@@ -83,6 +119,7 @@ export interface Status {
   devices?: Record<DeviceRole, DeviceChoice>;
   scan?: ScanStatus;
   control?: ControlStatus;
+  ftp?: FtpStatus;
 }
 
 // `init`: the whole ride so far, sent on connect, Start and Clear.

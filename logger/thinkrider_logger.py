@@ -18,6 +18,8 @@ What it does
      trainer drops.
   8. Optional trainer control (off by default, a toggle on the dashboard):
      simulate a climb (grade) or hold a power (ERG) over FTMS. See trainer_control.py.
+  9. Guided FTP test (a button on the dashboard); results are kept in
+     config/ftp_tests.json. See ftp_test.py.
 
 Requirements
   uv (https://docs.astral.sh/uv/) - `uv run` installs bleak from pyproject.toml.
@@ -75,6 +77,7 @@ except ImportError:                       # --demo works without bleak
     BleakClient = BleakScanner = None
 
 from trainer_control import TrainerControl, DemoControl, CONTROL_POINT  # noqa: E402 (logger/)
+from ftp_test import FtpTests  # noqa: E402 (logger/)
 
 
 # --------------------------------------------------------------------------
@@ -362,6 +365,7 @@ class Live:
         self.devices = None            # Devices: trainer / heart-rate choice (device panel)
         self.quit = None               # stops the logger (Stop button, closed launcher window)
         self.control = None            # TrainerControl / DemoControl: climb simulation, ERG
+        self.ftp_tests = None          # FtpTests: guided FTP test and its saved results
 
     # -- ride control (Start / Finish buttons) ------------------------------
     @property
@@ -382,6 +386,8 @@ class Live:
         self.sess_w = csv.DictWriter(self.sess_f, fieldnames=SESSION_FIELDS)
         self.sess_w.writeheader()
         self.status["ride"] = {**self.status["ride"], "state": "recording", "n": n, "fit": None}
+        if self.ftp_tests:
+            self.ftp_tests.on_ride_start()
         print(f"Ride {n} started")
         self.broadcast("init", {"history": [], "laps": self.laps, "status": self.status})
 
@@ -397,6 +403,8 @@ class Live:
         self.fit_path = path if write_fit(path, self.history, self.laps) else None
         self.status["ride"] = {**self.status["ride"], "state": "finished",
                                "fit": self.fit_path and os.path.basename(self.fit_path)}
+        if self.ftp_tests:
+            self.ftp_tests.on_ride_finish()
         n = len(self.history)
         print(f"Ride {self.status['ride']['n']} finished: {n // 60}:{n % 60:02d}"
               + (f" - saved {self.fit_path}" if self.fit_path else " - nothing recorded"))
@@ -412,6 +420,8 @@ class Live:
         self.sess_f = open(self.sess_path, "a", newline="")
         self.sess_w = csv.DictWriter(self.sess_f, fieldnames=SESSION_FIELDS)
         self.status["ride"] = {**self.status["ride"], "state": "recording", "fit": None}
+        if self.ftp_tests:
+            self.ftp_tests.on_ride_resume()
         print(f"Ride {self.status['ride']['n']} resumed")
         self.broadcast("status", self.status)
         return True
@@ -426,6 +436,8 @@ class Live:
         self.distance_m = self.energy_kj = 0.0
         self.ride_start = self.fit_path = self.sess_path = None
         self.status["ride"] = {**self.status["ride"], "state": "ready", "fit": None}
+        if self.ftp_tests:
+            self.ftp_tests.on_ride_start()        # a test in progress goes too
         print("Dashboard cleared")
         self.broadcast("init", {"history": [], "laps": self.laps, "status": self.status})
 
@@ -527,6 +539,8 @@ class Live:
         self.sess_w.writerow(s)
         self.sess_f.flush()
         self.broadcast("sample", s)
+        if self.ftp_tests:
+            self.ftp_tests.on_sample()
         return s
 
     # -- push to browsers --------------------------------------------------
@@ -688,6 +702,18 @@ async def handle_http(reader, writer, live: Live):
         elif path in ("/start", "/finish") and method == "POST":
             live.start_ride() if path == "/start" else live.finish_ride()
             body, ctype, code = b"ok", "text/plain", "200 OK"
+        elif path.startswith("/ftp-test/") and method == "POST" and live.ftp_tests:
+            ft, act = live.ftp_tests, path[len("/ftp-test/"):]
+            try:
+                ftp = int(finite(params["ftp"])) if params.get("ftp") else None
+                ok = (ft.start(ftp if ftp and 50 <= ftp <= 600 else None) if act == "start"
+                      else ft.cancel() if act == "cancel"
+                      else ft.delete(params["id"]) if act == "delete"
+                      else None)
+            except (KeyError, ValueError, OverflowError):
+                ok = None
+            body, ctype = (b"ok" if ok else b"bad request" if ok is None else b"not now"), "text/plain"
+            code = "200 OK" if ok else "400 Bad Request" if ok is None else "409 Conflict"
         elif path == "/resume" and method == "POST":
             ok = live.resume_ride()
             body, ctype = (b"ok", "text/plain") if ok else (b"nothing to resume", "text/plain")
@@ -1083,6 +1109,7 @@ def _read_json(path):
 # this repo) and reconnected automatically on the next start.
 # --------------------------------------------------------------------------
 DEVICES_FILE = os.path.join(APP_DIR, "devices.json")
+FTP_TESTS_FILE = os.path.join(APP_DIR, "ftp_tests.json")    # FTP test results (ftp_test.py)
 
 ROLES = ("trainer", "hr")
 KIND_ORDER = {"trainer": 0, "hr": 1, "other": 2}
@@ -1449,6 +1476,7 @@ async def main_async(args):
     live.port = args.port
     live.devices = devices = Devices(live, args, demo=args.demo)
     live.control = DemoControl(live) if args.demo else TrainerControl(live)
+    live.ftp_tests = FtpTests(live, FTP_TESTS_FILE, demo=args.demo)
     t0 = time.monotonic()
 
     # Stop button on the dashboard, closing the launcher's Terminal window (SIGHUP) or

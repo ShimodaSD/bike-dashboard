@@ -124,22 +124,33 @@ export function ClimbBand({ ctl, ftp, follow }: { ctl: ControlStatus; ftp: numbe
 
 // Workout steps with a grade (Grade="6" in a .zwo) set the trainer when the step starts, and in
 // ERG mode steps with a power target set the power. Changing it by hand holds until the next step.
+// In ERG a step without a power target (free ride, max effort, the FTP test's hard efforts) hands
+// the trainer back to Climb at the step's grade or 0 %, so the rider sets the power; the next step
+// with a power target goes back to ERG (`freed`).
 // The command is worked out while rendering; the effect only sends it to the trainer when it changes.
-function workoutCommand(ctl: ControlStatus | undefined, at: WorkoutAt | null, recording: boolean) {
+interface Command { key: string; send: () => void; freed?: boolean }
+function workoutCommand(ctl: ControlStatus | undefined, at: WorkoutAt | null, recording: boolean, freed: boolean): Command | null {
   if (!recording || !ctl || !ctl.enabled || ctl.state !== 'on' || !at) return null;
-  if (ctl.mode === 'erg' && at.target != null) {
+  if ((ctl.mode === 'erg' || freed) && at.target != null) {
     const w = Math.round(at.target / 5) * 5;            // ramps: a new target every 5 W
-    return { key: `${at.i}:p${w}`, send: () => sendPower(w) };
+    return { key: `${at.i}:p${w}`, send: () => sendPower(w), freed: false };
   }
   const grade = at.s.grade;
+  if (ctl.mode === 'erg' && at.target == null) return { key: `${at.i}:free`, send: () => sendGrade(grade ?? 0), freed: true };
   if (grade != null) return { key: `${at.i}:g${grade}`, send: () => sendGrade(grade) };
   return null;
 }
 
 export function useWorkoutControl({ ctl, at, recording }: { ctl: ControlStatus | undefined; at: WorkoutAt | null; recording: boolean }) {
-  const cmd = workoutCommand(ctl, at, recording);
+  const [freed, setFreed] = useState(false);            // the workout took the trainer out of ERG
+  if (freed && (!recording || !ctl || !ctl.enabled)) setFreed(false);
+  const cmd = workoutCommand(ctl, at, recording, freed);
   const key = cmd ? cmd.key : null;
-  const send = useEvent(() => cmd && cmd.send());
+  const send = useEvent(() => {
+    if (!cmd) return;
+    cmd.send();
+    if (cmd.freed !== undefined) setFreed(cmd.freed);
+  });
   useEffect(() => { if (key) send(); }, [key, send]);
 }
 

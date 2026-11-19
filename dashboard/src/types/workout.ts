@@ -11,6 +11,7 @@ export interface Segment {
   hr?: number | null;                // bpm
   spd?: number | null;               // km/h
   grade?: number | null;             // %
+  note?: string;                     // shown instead of "No target" (FTP test: "All out")
   name: string;
 }
 
