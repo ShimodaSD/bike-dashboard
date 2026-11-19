@@ -13,7 +13,9 @@ dashboard/            dashboard.html (built, served by the logger) and its React
   src/types/          the logger's SSE payloads (feed.ts) and the workout model (workout.ts)
   src/workout/        workout files: reading .zwo / .erg / .mrc, step targets, off-target beep
   src/control/        Trainer control band: grade slider, ERG, workout grades
-tests/                self-check for the logger
+  src/util/           ride maths: zones, NP, TSS, lap stats
+  test/               dashboard tests: unit/ (Vitest), components/ (React Testing Library), e2e/ (Playwright)
+tests/                logger tests (pytest); helpers/ has the fake Bluetooth, a .FIT reader and an HTTP client
 workouts/             test workouts: power, heart rate, cadence and speed targets (load them in Settings)
 rides/                your recordings, one folder per run (not committed)
 config/               devices.json (your trainer / HR pick), kept on this computer (not committed)
@@ -89,7 +91,7 @@ middle of a ride still saves the `.fit`. To rebuild the `.fit` files from the sa
 (`session_1hz.csv` -> `ride.fit`, `session_1hz_2.csv` -> `ride_2.fit`, ...):
 `uv run logger/thinkrider_logger.py --fit-from rides/x2max_YYYYMMDD_HHMMSS`.
 
-Self-check for the packet decoder and the `.fit` writer: `uv run python -m unittest discover tests`.
+Tests: see [Testing](#testing).
 
 ## Heart rate from a Garmin watch (Forerunner 165)
 
@@ -177,4 +179,33 @@ The script talks to the page over `GET /events` (Server-Sent Events: `init`,
 `sample`, `preview`, `live`, `status`, `laps`; `/events?live=2` caps `live` at 2/s), `POST /start`, `/finish`, `/lap`, `/clear`, `/quit`,
 `POST /devices/scan`, `/devices/use?role=trainer|hr&address=..&name=..`,
 `/devices/off?role=..` and `GET /ride.fit`. POSTs from other
-sites are refused.
+sites are refused (the Origin must match, and the Host must be localhost, an IP address or a
+`.local` name).
+
+## Testing
+
+Nothing needs a trainer: the logger tests use a fake Bluetooth stack, and the end-to-end tests
+run the logger with `--demo`.
+
+```bash
+uv run pytest                 # logger: decoders, 1 Hz timeline, ride / lap maths, .FIT, web server,
+                              # origin protection, reconnects, trainer control safety
+
+cd dashboard
+pnpm install
+pnpm test                     # Vitest: ride maths, workouts, beep rules, live feed, components
+pnpm build                    # the end-to-end tests use the built dashboard.html
+pnpm exec playwright install chromium   # once
+pnpm test:e2e                 # Playwright: a demo ride in Chromium at laptop and phone size
+pnpm test:all                 # typecheck + Vitest + Playwright
+```
+
+- `tests/` (pytest, run with uv): one file per area. `helpers/fit.py` reads a `.fit` back field
+  by field, `helpers/http.py` runs the logger's web server on a free port.
+- `dashboard/test/unit/`: pure logic (`src/util/ride.ts`, `src/workout/workout.tsx`, the feed store).
+- `dashboard/test/components/`: the dashboard and its panels in jsdom, against a fake event
+  stream (`test/fixtures/`). Charts are stubbed there (uPlot needs a canvas) and covered end to end.
+- `dashboard/test/e2e/`: starts `logger/thinkrider_logger.py --demo` on port 8765 (so a logger
+  you have running on 8000 doesn't clash) and rides it: Start, Lap, Finish, the `.FIT` download,
+  Resume, a workout, Trainer control and the device panel. Output goes to `dashboard/test-results/`.
+- `pnpm test:watch` reruns the Vitest tests on save.

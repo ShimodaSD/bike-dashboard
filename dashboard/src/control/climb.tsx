@@ -88,7 +88,8 @@ export function ClimbBand({ ctl, ftp, follow }: { ctl: ControlStatus; ftp: numbe
   const live = on && ctl.state === 'on';
   const erg = ctl.mode === 'erg';
   const [lo, hi] = ctl.power_range || [50, 1000];
-  const ergQuick = ERG_PCT.map(p => Math.min(hi, Math.max(lo, Math.round((ftp * p) / 5) * 5)));
+  // quick ERG targets from FTP, kept inside the trainer's range (two can land on its limit: show it once)
+  const ergQuick = [...new Set(ERG_PCT.map(p => Math.min(hi, Math.max(lo, Math.round((ftp * p) / 5) * 5))))];
   const canErg = !ctl.supports || ctl.supports.erg !== false;
   const stateCls = live ? 'ok' : ['lost', 'error', 'unsupported'].includes(ctl.state) ? 'bad' : on ? 'wait' : '';
   return (

@@ -4,7 +4,7 @@ import { build } from 'esbuild';
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const r = await build({
-  entryPoints: ['src/app.tsx'], bundle: true, minify: true, write: false, outdir: 'out',
+  entryPoints: ['src/main.tsx'], bundle: true, minify: true, write: false, outdir: 'out',
   format: 'iife', target: 'es2019', jsx: 'automatic',
   define: { 'process.env.NODE_ENV': '"production"' },
 });

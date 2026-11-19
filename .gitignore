@@ -264,3 +264,7 @@ devices.json
 
 # macOS
 .DS_Store
+
+# Dashboard test output (Playwright)
+dashboard/test-results/
+dashboard/playwright-report/
