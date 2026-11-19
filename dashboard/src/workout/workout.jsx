@@ -1,5 +1,6 @@
 // Structured workouts: load a .zwo (Zwift), .erg or .mrc file, follow its steps during a
-// recorded ride, and beep when power, cadence or heart rate is off target, at most once every 15 s.
+// recorded ride, and beep when power, cadence or heart rate stays off target for more than 7 s,
+// at most once every 15 s.
 // With Trainer control off the rider holds the target. With it on, a step's grade sets the
 // trainer's climb, and in ERG mode a step's power target sets the trainer (control/climb.jsx).
 // Heart-rate targets are an extra .zwo attribute (Zwift ignores it): HeartRate="140" (bpm) on
@@ -8,6 +9,7 @@
 import React, { useEffect, useRef } from 'react';
 
 const BEEP_GAP_MS = 15000;     // at most one beep every 15 s
+const BEEP_AFTER_MS = 7000;    // only once off target for longer than this without a break
 const GRACE_S = 8;             // no beep in the first seconds of a step (time to change effort)
 const HR_GRACE_S = 30;         // heart rate needs longer to follow a new effort
 
@@ -211,12 +213,16 @@ export function WorkoutBand({ wo, t, mode, ftp, power, cadence, hr, speed, sound
   const at = mode === 'ready' ? workoutAt(wo, 0, ftp) : workoutAt(wo, t, ftp);
   const off = mode === 'recording' ? offTarget(at, power, cadence, hr, speed) : null;
   const d = off ? offDetail(off, at, power, cadence, hr, speed) : null;
-  const lastBeep = useRef(0);
+  // Sound is an outside system: the effect checks on each change (every packet / second) how long
+  // the rider has been off target. Back on target resets the clock.
+  const lastBeep = useRef(0), offSince = useRef(null);
   useEffect(() => {
-    if (!off || !sound) return;
+    if (!off) { offSince.current = null; return; }
     const n = Date.now();
+    if (offSince.current === null) offSince.current = n;
+    if (!sound || n - offSince.current <= BEEP_AFTER_MS) return;
     if (n - lastBeep.current >= BEEP_GAP_MS) { lastBeep.current = n; beep(off); }
-  }, [off, t, sound]);
+  }, [off, t, sound, power, cadence, hr, speed]);
 
   const prof = profileOf(wo, ftp);
   const max = Math.max(...wo.segs.map(s => Math.max(prof.v(s), prof.v(s, true))), 1);
@@ -301,6 +307,6 @@ export function WorkoutSettings({ wo, setWo, sound, setSound }) {
     </div>
     <p className={'help' + (err ? ' err' : '')}>{err || (wo
       ? <><b>{wo.name}</b> · {wo.segs.length} steps · {fmt(wo.total)}. Starts with the ride.</>
-      : <>Zwift .zwo, .erg or .mrc file. Beeps at most once every 15 s when power, cadence, heart rate or speed is off target. Steps with a grade climb on their own when <b>Trainer control</b> is on.</>)}</p>
+      : <>Zwift .zwo, .erg or .mrc file. Beeps when power, cadence, heart rate or speed stays off target for more than 7 s, at most once every 15 s. Steps with a grade climb on their own when <b>Trainer control</b> is on.</>)}</p>
   </>;
 }

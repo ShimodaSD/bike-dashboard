@@ -6,6 +6,7 @@
 //   POST /control/power?w=    hold this power (ERG mode)
 // status.control = { enabled, state, mode: 'sim'|'erg', grade, power_w, msg, supports, power_range }
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useEvent } from '../hooks/hooks.js';
 
 const post = path => fetch(path, { method: 'POST' }).catch(() => {});
 export const GRADE_MIN = -5, GRADE_MAX = 15, GRADE_STEP = 0.5;
@@ -27,6 +28,8 @@ const STATE_TXT = {
 };
 
 // Sends at most every `gap` ms while a slider is dragged, and always the last value.
+// A send still pending when the dial goes away (control off, Climb <-> ERG) is dropped, so a
+// late grade can't flip the trainer back to the other mode.
 function useThrottled(fn, gap = 150) {
   const last = useRef(0), timer = useRef(null), pending = useRef(null);
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -40,17 +43,22 @@ function useThrottled(fn, gap = 150) {
 }
 
 // One number shown big, with − / + beside it, quick picks and a slider underneath.
+// The number picked here shows at once (the draft) until the logger reports it back.
+const DRAFT_MS = 1500;
 function Dial({ label, value, unit, fmt, min, max, step, quick, quickLabel, onSet }) {
-  const [draft, setDraft] = useState(null);       // slider position while dragging
+  const [draft, setDraft] = useState(null);       // value picked here, not yet confirmed
+  const draftTimer = useRef(null);
   const send = useThrottled(onSet);
-  useEffect(() => { if (draft !== null && Math.abs(draft - value) < step / 2) setDraft(null); }, [value]); // eslint-disable-line
-  useEffect(() => {                               // the logger may round or refuse: show its value again
-    if (draft === null) return;
-    const t = setTimeout(() => setDraft(null), 1500);
-    return () => clearTimeout(t);
-  }, [draft]);
+  // the logger confirmed it: drop the draft (adjusted while rendering)
+  if (draft !== null && Math.abs(draft - value) < step / 2) setDraft(null);
+  // set from the handlers; the logger may round or refuse, so show its value again after a while
+  const pick = n => {
+    setDraft(n);
+    clearTimeout(draftTimer.current);
+    draftTimer.current = setTimeout(() => setDraft(null), DRAFT_MS);
+  };
   const v = draft ?? value;
-  const nudge = d => { const n = Math.min(max, Math.max(min, v + d)); setDraft(n); onSet(n); };
+  const nudge = d => { const n = Math.min(max, Math.max(min, v + d)); pick(n); onSet(n); };
   return (
     <div className="dial">
       <div className="dial-now">
@@ -60,10 +68,10 @@ function Dial({ label, value, unit, fmt, min, max, step, quick, quickLabel, onSe
       </div>
       <div className="dial-quick" role="group" aria-label={`Quick ${label.toLowerCase()}`}>
         {quick.map(q => <button key={q} className={Math.abs(q - v) < step / 2 ? 'on' : ''}
-                                onClick={() => { setDraft(q); onSet(q); }}>{quickLabel(q)}</button>)}
+                                onClick={() => { pick(q); onSet(q); }}>{quickLabel(q)}</button>)}
       </div>
       <input type="range" min={min} max={max} step={step} value={v} aria-label={label}
-             onChange={e => { const n = +e.target.value; setDraft(n); send(n); }} />
+             onChange={e => { const n = +e.target.value; pick(n); send(n); }} />
     </div>
   );
 }
@@ -108,35 +116,30 @@ export function ClimbBand({ ctl, ftp, follow }) {
 
 // Workout steps with a grade (Grade="6" in a .zwo) set the trainer when the step starts, and in
 // ERG mode steps with a power target set the power. Changing it by hand holds until the next step.
-export function useWorkoutControl({ ctl, at, recording }) {
-  const sent = useRef(null);
-  useEffect(() => {
-    if (!recording || !ctl || !ctl.enabled || ctl.state !== 'on' || !at) { sent.current = null; return; }
-    let key = null, go = null;
-    if (ctl.mode === 'erg' && at.target != null) {
-      const w = Math.round(at.target / 5) * 5;          // ramps: a new target every 5 W
-      key = `${at.i}:p${w}`; go = () => sendPower(w);
-    } else if (at.s.grade != null) {
-      key = `${at.i}:g${at.s.grade}`; go = () => sendGrade(at.s.grade);
-    }
-    if (key && key !== sent.current) { sent.current = key; go(); }
-  }, [recording, ctl && ctl.enabled, ctl && ctl.state, ctl && ctl.mode, at && at.i, at && at.target, at && at.s.grade]); // eslint-disable-line
+// The command is worked out while rendering; the effect only sends it to the trainer when it changes.
+function workoutCommand(ctl, at, recording) {
+  if (!recording || !ctl || !ctl.enabled || ctl.state !== 'on' || !at) return null;
+  if (ctl.mode === 'erg' && at.target != null) {
+    const w = Math.round(at.target / 5) * 5;            // ramps: a new target every 5 W
+    return { key: `${at.i}:p${w}`, send: () => sendPower(w) };
+  }
+  if (at.s.grade != null) return { key: `${at.i}:g${at.s.grade}`, send: () => sendGrade(at.s.grade) };
+  return null;
 }
 
-// + / − keys: grade ±0.5 % (or ERG ±5 W) while control is on.
-export function useControlKeys(ctlRef) {
-  useEffect(() => {
-    const k = e => {
-      if (e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
-      const c = ctlRef.current;
-      if (!c || !c.enabled || c.state !== 'on') return;
-      const d = e.key === '+' || e.key === '=' ? 1 : e.key === '-' || e.key === '_' ? -1 : 0;
-      if (!d) return;
-      e.preventDefault();
-      if (c.mode === 'erg') sendPower(c.power_w + d * 5);
-      else sendGrade(Math.min(GRADE_MAX, Math.max(GRADE_MIN, c.grade + d * GRADE_STEP)));
-    };
-    document.addEventListener('keydown', k);
-    return () => document.removeEventListener('keydown', k);
-  }, [ctlRef]);
+export function useWorkoutControl({ ctl, at, recording }) {
+  const cmd = workoutCommand(ctl, at, recording);
+  const key = cmd ? cmd.key : null;
+  const send = useEvent(() => cmd && cmd.send());
+  useEffect(() => { if (key) send(); }, [key, send]);
+}
+
+// + / − keys: grade ±0.5 % (or ERG ±5 W) while control is on. Called from the app's key listener.
+export function controlKey(e, c) {
+  if (!c || !c.enabled || c.state !== 'on') return;
+  const d = e.key === '+' || e.key === '=' ? 1 : e.key === '-' || e.key === '_' ? -1 : 0;
+  if (!d) return;
+  e.preventDefault();
+  if (c.mode === 'erg') sendPower(c.power_w + d * 5);
+  else sendGrade(Math.min(GRADE_MAX, Math.max(GRADE_MIN, c.grade + d * GRADE_STEP)));
 }
