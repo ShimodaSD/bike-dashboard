@@ -15,7 +15,7 @@ writeFileSync("dashboard.html", `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>X2Max Live Training</title>
+<title>Bike Live Training</title>
 <link rel="icon" href="data:,">
 <!-- Generated file. Edit dashboard/src/, then run: cd dashboard && pnpm build -->
 <style>

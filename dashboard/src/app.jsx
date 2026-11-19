@@ -3,7 +3,7 @@
 //                 live (instant numbers on every trainer packet; ?live=2 caps it at 2/s)
 //   POST /lap     start a new lap
 //   POST /start, /finish   begin / end a recorded ride
-//   POST /devices/scan, /devices/use|off?role=trainer|hr   device panel
+//   POST /devices/scan, /devices/use|search|off?role=trainer|hr   device panel
 //   POST /clear   empty the dashboard (files on disk stay)
 //   POST /quit    stop the logger
 //   GET  /ride.fit  the finished ride (or the ride so far)
@@ -135,7 +135,7 @@ const STATUS = {
   searching:    ['--warning', s => s.device ? `Looking for ${s.device}…` : 'Searching for trainer…', 'Searching…'],
   reconnecting: ['--warning', () => 'Trainer lost · reconnecting (timer paused)', 'Trainer lost'],
   starting:     ['--warning', () => 'Starting…', 'Starting…'],
-  off:          ['--text-muted', () => 'No trainer connected', 'No trainer'],
+  off:          ['--text-muted', () => 'Trainer search off', 'Trainer off'],
 };
 
 // Separate heart-rate device (Garmin watch broadcasting HR, chest strap ...)
@@ -178,7 +178,7 @@ function Header({ status, ride, act, panel, toggle }) {
   const hrPill = HR_STATUS[hr.state];
   return (
     <header>
-      <h1>X2Max <span>Live training</span></h1>
+      <h1>Bike <span>Live training</span></h1>
       <button className={'pills' + (devicesOpen ? ' on' : '')} onClick={() => toggle('devices')}
               aria-expanded={devicesOpen} aria-controls="devices" title="Choose the trainer and heart-rate device">
         <Pill col={col} long={txt(status)} short={short} />
@@ -356,9 +356,10 @@ function slotInfo(role, status) {
   const choice = (status.devices || {})[role] || { mode: 'auto' };
   const name = s.device || choice.name || choice.address;
   if (choice.mode === 'off' || s.state === 'off')
-    return { dot: '--text-muted', name: choice.name || 'None', text: 'Not connected. Pick a device below.', off: true };
+    return { dot: '--text-muted', name: choice.name || 'None', off: true,
+             text: `Search is off. It won't look for ${role === 'trainer' ? 'the trainer' : 'a heart-rate broadcast'}, even after a restart, until you turn it on.` };
   if (s.state === 'connected' || s.state === 'demo')
-    return { dot: '--good', name, text: 'Connected. Reconnects by itself next time.', on: true };
+    return { dot: '--good', name, text: 'Connected. Reconnects by itself if it drops.', on: true };
   if (s.state === 'reconnecting')
     return { dot: '--warning', name: name || ROLE[role].any, text: 'Connection lost, reconnecting…' };
   if (choice.mode === 'device') return { dot: '--warning', name, text: 'Looking for it…' };
@@ -377,10 +378,14 @@ function Slot({ role, status, recording }) {
       <div className="slot-dev"><span className="dot" style={{ background: `var(${info.dot})` }} /><b>{info.name}</b></div>
       <p className="help">{info.text}</p>
       <div className="inline">
-        {info.off ? (choice.address && <button onClick={() => post(useUrl(role, choice))}>Connect {choice.name || 'again'}</button>)
-          : <button className={armedCls(armed)} onClick={off}>{armed ? `${PRESS} again (pauses the ride)` : 'Disconnect'}</button>}
+        {info.off ? <>
+            <button className="primary" onClick={() => post(`/devices/search?role=${role}`)}>
+              {choice.address ? `Search for ${choice.name || 'it'}` : 'Turn search on'}</button>
+            {choice.address && <button onClick={() => post(`/devices/auto?role=${role}`)}>Search for any</button>}
+          </> : <button className={armedCls(armed)} onClick={off}>
+            {armed ? `${PRESS} again (pauses the ride)` : info.on ? 'Disconnect and stop searching' : 'Stop searching'}</button>}
       </div>
-      {!info.on && <p className="help">{ROLE[role].tip}</p>}
+      {!info.on && !info.off && <p className="help">{ROLE[role].tip}</p>}
     </div>
   );
 }
