@@ -113,6 +113,7 @@ test('FTP test: start from the strip, the band counts down, stop keeps the ride'
   await expect(strip(page)).toContainText('Recording FTP test');
   const band = page.getByRole('region', { name: 'FTP test' });
   await expect(band).toContainText(/The 20 minutes start in 2[45]:\d\d/);
+  await expect(band).toContainText('Fan on, bottle in reach');
   await expect(page.getByRole('region', { name: 'Workout' })).toContainText('Step 1/5 · Warm-up');
   await band.getByRole('button', { name: 'Stop test' }).click();
   await page.waitForTimeout(600);
@@ -120,6 +121,19 @@ test('FTP test: start from the strip, the band counts down, stop keeps the ride'
   await expect(band).toHaveCount(0);
   await expect(strip(page)).toContainText('Recording ride');
   await finish(page);
+});
+
+test('FTP test: Settings has the start button and a guide for the rider', async ({ page }) => {
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const settings = page.locator('#settings');
+  await expect(settings.getByRole('button', { name: 'Start FTP test' })).toBeEnabled();
+  await expect(settings.getByText('A fan on you')).toBeHidden();
+  await settings.getByText('How to get a good test').click();
+  await expect(settings.getByText(/A fan on you/)).toBeVisible();
+  await expect(settings.getByText(/Start a little conservative, near your current FTP/)).toBeVisible();
+  await expect(settings.getByText(/about 35 to 50 minutes/)).toBeVisible();
+  await expect(settings.getByText(/Every 4 to 8 weeks/)).toBeVisible();
+  await closeDrawer(page);
 });
 
 test('trainer control: climb in demo', async ({ page }) => {

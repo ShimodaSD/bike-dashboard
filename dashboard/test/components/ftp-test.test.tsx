@@ -63,6 +63,7 @@ describe('while the test runs', () => {
   it('counts down to the 20 minutes and shows the protocol as the workout', async () => {
     await renderApp(recording({ ftp: ftpStatus({}) }), ride(new Array(60).fill(110)));
     expect(band()).toHaveTextContent('The 20 minutes start in 24:00');
+    expect(band()).toHaveTextContent('Fan on, bottle in reach');
     const wo = screen.getByRole('region', { name: 'Workout' });
     expect(wo).toHaveTextContent('FTP test');
     expect(wo).toHaveTextContent('Step 1/5 · Warm-up');
@@ -76,6 +77,7 @@ describe('while the test runs', () => {
     expect(band()).toHaveTextContent('20 min avg260 W');
     expect(band()).toHaveTextContent('FTP so far247 W');
     expect(band()).toHaveTextContent('Left10:00');
+    expect(band()).toHaveTextContent('Hold it steady');
     expect(screen.getByRole('region', { name: 'Workout' })).toHaveTextContent('Your pace');
   });
 
@@ -104,6 +106,8 @@ describe('the result', () => {
     const user = await renderApp(recording({ ftp: done() }), ride(new Array(2710).fill(200)));
     expect(band()).toHaveTextContent('New FTP247 W');
     expect(band()).toHaveTextContent('95 % of 260 W for 20 min · +27 W from 220 W');
+    expect(band()).toHaveTextContent('about 35 to 50 minutes');
+    expect(band()).toHaveTextContent('Test again in 4 to 8 weeks (Dec 17, 2026 to Jan 14, 2027)');
     await user.click(within(band()).getByRole('button', { name: 'Use 247 W' }));
     expect(localStorage.getItem('x2max.ftp')).toBe('247');
     expect(band()).toHaveTextContent('Your FTP247 W');
@@ -158,6 +162,14 @@ describe('saved results in Settings', () => {
     expect(screen.getByTestId('ftp')).toHaveTextContent('231');
     await user.click(screen.getByRole('button', { name: 'Show all 5 tests' }));
     expect(within(screen.getByRole('list', { name: 'FTP test results' })).getAllByRole('listitem')).toHaveLength(5);
+  });
+
+  it('a guide on how to get a good test', async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<Harness st={ftpStatus()} />);
+    await user.click(screen.getByText('How to get a good test'));
+    expect(screen.getByText(/A fan on you/)).toBeVisible();
+    expect(screen.getByText(/Every 4 to 8 weeks/)).toBeVisible();
   });
 
   it('Delete needs a second press', async () => {

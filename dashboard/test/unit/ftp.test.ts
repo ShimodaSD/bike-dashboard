@@ -1,6 +1,6 @@
 // FTP test helpers: the protocol as a workout, the 20 minute window and the live estimate.
 import { describe, expect, it } from 'vitest';
-import { protocolWorkout, testProgress, testWindow, totalMinutes } from '../../src/ftp/ftp';
+import { protocolWorkout, riderTip, testProgress, testWindow, totalMinutes } from '../../src/ftp/ftp';
 import { workoutAt } from '../../src/workout/workout';
 import { ride } from '../fixtures/ride';
 import { PROTOCOL, ftpStatus } from '../fixtures/ftp';
@@ -42,5 +42,25 @@ describe('progress', () => {
   it('after the 20 minutes, or once the logger says done', () => {
     expect(testProgress(ride(new Array(2700).fill(200)), run(), PROTOCOL, 0.95)).toEqual({ phase: 'after' });
     expect(testProgress(ride(new Array(1600).fill(200)), run({ state: 'done' }), PROTOCOL, 0.95)).toEqual({ phase: 'after' });
+  });
+});
+
+describe('guidance for the rider', () => {
+  const tip = (t: number, ref = 220) => riderTip(ride(new Array(t).fill(150)), run(), PROTOCOL, 0.95, ref);
+
+  it('each step says what to do', () => {
+    expect(tip(10)).toMatch(/^Easy spin.*Fan on/);
+    expect(tip(700)).toMatch(/^Hard but controlled/);
+    expect(tip(1000)).toMatch(/^Recover/);
+    expect(tip(3000)).toMatch(/^Spin easy/);
+    expect(tip(4000)).toMatch(/^Spin easy/);                  // past the protocol
+  });
+
+  it('paces the 20 minutes: start near FTP ÷ 0.95, steady, then empty the tank', () => {
+    expect(tip(1500)).toBe('Start a little conservative, near 230 W. Going out too hard is the most common mistake; you can raise it later.');
+    expect(tip(1500, 250)).toContain('near 265 W');
+    expect(tip(2000)).toMatch(/^Hold it steady/);
+    expect(tip(2450)).toMatch(/^Last 5 minutes/);
+    expect(tip(2650)).toBe('Last minute: empty the tank.');
   });
 });

@@ -445,7 +445,13 @@ td .now { font-size: 11px; font-weight: 600; color: var(--rec-text); margin-left
   .ftptest { gap: 6px 16px; padding: 10px 12px; }
   .ftptest .ft-stat b { font-size: 24px; }
   .ftptest .ft-msg { flex-basis: 100%; }
-  .ftptest.test .ft-msg { display: none; }
   .ftptest .ft-actions, .ftptest .ft-note { margin-left: 0; }
   .strip .ftp-start { margin-left: 0; }
 }
+.ftp-guide { margin-top: 10px; font-size: 13px; color: var(--text-secondary); }
+.ftp-guide summary { cursor: pointer; min-height: var(--tap); display: flex; align-items: center; color: var(--text-primary); font-weight: 600; }
+.ftp-guide h3 { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); margin: 10px 0 4px; }
+.ftp-guide ul { margin: 0; padding-left: 18px; line-height: 1.45; }
+.ftp-guide li + li { margin-top: 3px; }
+.ftp-guide p { margin: 0; line-height: 1.45; max-width: 70ch; }
+.ftptest p.ft-hint { margin: 0; line-height: 1.45; }

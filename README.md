@@ -154,6 +154,12 @@ press Use. Finishing before the 20 minutes end saves nothing (**Resume ride** ca
 test). **Settings > FTP test** lists past results, newest first, with **Use** and **Delete**.
 `--demo` keeps its results in memory only.
 
+The band also coaches the test as it goes: what each step is for, a starting pace for the 20
+minutes (your current FTP ÷ 0.95), steady pacing in the middle and when to push at the end. The
+result explains what the number means (power you can hold for about 35 to 50 minutes; 95 % reads
+a little high for many riders) and when to test again (4 to 8 weeks). **Settings > FTP test > How
+to get a good test** has the full checklist: rested, fed, a fan, the same setup every time.
+
 ### Workouts
 
 **Settings > Workout > Load workout** reads a Zwift `.zwo`, an `.erg` (watts) or an `.mrc`
