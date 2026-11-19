@@ -8,10 +8,18 @@
 //   POST /clear   empty the dashboard (files on disk stay)
 //   POST /quit    stop the logger
 //   GET  /ride.fit  the finished ride (or the ride so far)
-import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
+//
+// State comes from two external stores read with useSyncExternalStore: the logger's live feed
+// (hooks/feed.js) and settings in localStorage (hooks/stored.js). Everything else is derived while
+// rendering. Effects are kept for real outside systems only: drawing the canvases, document key
+// and focus handling, the device scan while that panel is open, and the trainer / audio.
+import React, { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import { WorkoutBand, WorkoutSettings, plannedLine, powerTol, workoutAt, CAD_TOL, HR_TOL, SPEED_TOL } from './workout/workout.jsx';
-import { ClimbBand, useWorkoutControl, useControlKeys, fmtGrade } from './control/climb.jsx';
+import { ClimbBand, useWorkoutControl, controlKey, fmtGrade } from './control/climb.jsx';
+import { useLiveFeed } from './hooks/feed.js';
+import { useStored } from './hooks/stored.js';
+import { useArmed, useEvent, useWidth } from './hooks/hooks.js';
 
 // ------------------------------------------------------------------ constants & helpers
 const ZONES = [
@@ -36,15 +44,6 @@ const fmtT = s => {
 };
 const zoneOf = (p, ftp) => { const i = ZONES.findIndex(z => p / ftp < z.hi); return i < 0 ? 6 : i; };
 const cssVar = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-
-function useStored(key, initial) {
-  const [v, setV] = useState(() => {
-    try { const s = localStorage.getItem('x2max.' + key); return s === null || s === '' ? initial : JSON.parse(s); }
-    catch (e) { return initial; }
-  });
-  useEffect(() => { try { localStorage.setItem('x2max.' + key, JSON.stringify(v)); } catch (e) {} }, [key, v]);
-  return [v, setV];
-}
 
 // Summary over a slice of 1 Hz samples. `before` = the sample just before the slice (for distance/kJ deltas).
 function stats(a, ftp, before) {
@@ -77,52 +76,9 @@ function stats(a, ftp, before) {
   return out;
 }
 
-// ------------------------------------------------------------------ live feed (SSE)
-// History lives in a ref (it can be hours long) and `version` bumps on each change.
+// ------------------------------------------------------------------ live feed (SSE): hooks/feed.js
 // Instant numbers older than this are ignored (trainer stopped sending).
 const FRESH_MS = 2500;
-
-function useLiveFeed(rate) {
-  const [now, setNow] = useState(null);           // instant numbers, every packet
-  const recent = useRef([]);                       // last few seconds of them, for 3 s / 5 s power
-  const hist = useRef([]);
-  const [laps, setLaps] = useState([0]);
-  const [status, setStatus] = useState({});
-  const [online, setOnline] = useState(true);
-  const [version, setVersion] = useState(0);
-  const [preview, setPreview] = useState(null);   // live numbers while not recording
-
-  useEffect(() => {
-    let es, closed = false;
-    const open = () => {
-      es = new EventSource(rate ? `/events?live=${rate}` : '/events');
-      es.addEventListener('live', e => {
-        const v = JSON.parse(e.data), at = Date.now(), r = recent.current;
-        r.push({ at, p: v.power_w });
-        while (r.length && at - r[0].at > 6000) r.shift();
-        setNow({ ...v, at });
-      });
-      es.addEventListener('init', e => {
-        const d = JSON.parse(e.data);
-        hist.current = d.history; setLaps(d.laps); setStatus(d.status);
-        setOnline(true); setVersion(v => v + 1);
-      });
-      es.addEventListener('sample', e => {
-        const s = JSON.parse(e.data), h = hist.current;
-        if (s.t === h.length) { h.push(s); setVersion(v => v + 1); }
-        else if (s.t > h.length) { es.close(); if (!closed) open(); }  // missed samples: resync via init
-      });
-      es.addEventListener('preview', e => setPreview(JSON.parse(e.data)));
-      es.addEventListener('laps', e => { setLaps(JSON.parse(e.data)); setVersion(v => v + 1); });
-      es.addEventListener('status', e => setStatus(JSON.parse(e.data)));
-      es.onerror = () => setOnline(false);  // EventSource retries by itself; init clears this
-    };
-    open();
-    return () => { closed = true; es.close(); };
-  }, [rate]);
-
-  return { hist: hist.current, laps, status, online, version, preview, now, recent: recent.current };
-}
 
 const post = path => fetch(path, { method: 'POST' }).catch(() => {});
 // Touch screens say "Tap", mice say "Click".
@@ -151,22 +107,7 @@ const Pill = ({ col, long, short }) => (
   <span className="pill"><span className="dot" style={{ background: `var(${col})` }} />
     <span className="long">{long}</span><span className="short" aria-hidden="true">{short}</span></span>);
 
-// A button that needs a second press within 4 s (Finish, Start over an unsaved ride, Clear, Stop).
-// `press(action)` arms on the first press and runs `action` on the second. A second press that
-// lands within ARM_GUARD_MS of the first is a double tap, not a decision, so it is ignored.
-const ARM_MS = 4000, ARM_GUARD_MS = 500;
-function useArmed(resetKey) {
-  const [armed, setArmed] = useState(false);
-  const at = useRef(0);
-  useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), ARM_MS); return () => clearTimeout(t); }, [armed]);
-  useEffect(() => setArmed(false), [resetKey]);
-  const press = useCallback(action => {
-    if (!armed) { at.current = Date.now(); setArmed(true); return; }
-    if (Date.now() - at.current < ARM_GUARD_MS) return;
-    setArmed(false); action();
-  }, [armed]);
-  return [armed, press];
-}
+// Buttons that need a second press: useArmed in hooks/hooks.js.
 // Armed look: red fill plus a bar that drains over the 4 s, so the timeout is visible.
 const armedCls = (armed, base = '') => (armed ? `${base} danger armed`.trim() : base);
 
@@ -207,13 +148,14 @@ function Header({ status, ride, act, panel, toggle }) {
 // Not a modal: the page behind keeps updating and stays usable. Esc or Close puts focus back.
 function Drawer({ id, title, onClose, children }) {
   const ref = useRef(null);
-  useEffect(() => {
+  const close = useEvent(onClose);
+  useEffect(() => {      // focus moves in while open and back out on close; Esc works anywhere on the page
     const back = document.activeElement;
     ref.current.focus();
-    const k = e => { if (e.key === 'Escape') onClose(); };
+    const k = e => { if (e.key === 'Escape') close(); };
     document.addEventListener('keydown', k);
     return () => { document.removeEventListener('keydown', k); if (back && back.focus) back.focus(); };
-  }, []); // eslint-disable-line
+  }, [close]);
   return (
     <aside className="drawer" id={id} aria-label={title} tabIndex={-1} ref={ref}>
       <div className="drawer-head">
@@ -226,18 +168,34 @@ function Drawer({ id, title, onClose, children }) {
 }
 
 // ------------------------------------------------------------------ settings
-function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout }) {
+// The draft is what is typed; it is committed on blur / Enter. Keyed by the saved value, so a new
+// FTP or weight (from here or another tab) starts a fresh draft instead of an effect copying it in.
+function FtpField({ ftp, setFtp }) {
   const [ftpDraft, setFtpDraft] = useState(String(ftp));
   const [ftpErr, setFtpErr] = useState(false);
-  useEffect(() => setFtpDraft(String(ftp)), [ftp]);
   const commitFtp = () => {
     const v = Math.round(+ftpDraft);
-    if (v >= 50 && v <= 600) { setFtp(v); setFtpErr(false); } else { setFtpErr(true); setFtpDraft(String(ftp)); }
+    if (v >= 50 && v <= 600) { setFtp(v); setFtpDraft(String(v)); setFtpErr(false); } else { setFtpErr(true); setFtpDraft(String(ftp)); }
   };
+  return (
+    <div className="field">
+      <label htmlFor="ftp">FTP</label>
+      <div className="inline">
+        <input id="ftp" type="number" inputMode="numeric" min="50" max="600" step="1" value={ftpDraft}
+               aria-invalid={ftpErr} aria-describedby="ftp-help"
+               onChange={e => { setFtpDraft(e.target.value); setFtpErr(false); }} onBlur={commitFtp}
+               onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} /> W
+      </div>
+      <p id="ftp-help" className={'help' + (ftpErr ? ' err' : '')}>
+        {ftpErr ? 'FTP must be between 50 and 600 W. Kept ' + ftp + ' W.' : 'Sets the power zones and the FTP line.'}</p>
+    </div>
+  );
+}
+
+function WeightField({ kg, setKg }) {
   // typed as text so a half-typed "7" or a comma ("72,5") isn't wiped while typing
   const [kgDraft, setKgDraft] = useState(kg == null ? '' : String(kg));
   const [kgErr, setKgErr] = useState(false);
-  useEffect(() => setKgDraft(kg == null ? '' : String(kg)), [kg]);
   const commitKg = () => {
     const t = kgDraft.trim().replace(',', '.'), v = Math.round(+t * 10) / 10;
     if (t === '') { setKg(null); setKgErr(false); }
@@ -245,28 +203,24 @@ function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, li
     else setKgErr(true);
   };
   return (
+    <div className="field">
+      <label htmlFor="kg">Weight</label>
+      <div className="inline">
+        <input id="kg" type="text" inputMode="decimal" value={kgDraft} aria-invalid={kgErr}
+               onChange={e => { setKgDraft(e.target.value); setKgErr(false); }} onBlur={commitKg}
+               onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} /> kg
+      </div>
+      <p className={'help' + (kgErr ? ' err' : '')}>
+        {kgErr ? 'Weight must be between 30 and 200 kg.' : 'Used for W/kg. FTP and weight are remembered in this browser.'}</p>
+    </div>
+  );
+}
+
+function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout }) {
+  return (
     <section className="settings">
-      <div className="field">
-        <label htmlFor="ftp">FTP</label>
-        <div className="inline">
-          <input id="ftp" type="number" inputMode="numeric" min="50" max="600" step="1" value={ftpDraft}
-                 aria-invalid={ftpErr} aria-describedby="ftp-help"
-                 onChange={e => { setFtpDraft(e.target.value); setFtpErr(false); }} onBlur={commitFtp}
-                 onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} /> W
-        </div>
-        <p id="ftp-help" className={'help' + (ftpErr ? ' err' : '')}>
-          {ftpErr ? 'FTP must be between 50 and 600 W. Kept ' + ftp + ' W.' : 'Sets the power zones and the FTP line.'}</p>
-      </div>
-      <div className="field">
-        <label htmlFor="kg">Weight</label>
-        <div className="inline">
-          <input id="kg" type="text" inputMode="decimal" value={kgDraft} aria-invalid={kgErr}
-                 onChange={e => { setKgDraft(e.target.value); setKgErr(false); }} onBlur={commitKg}
-                 onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} /> kg
-        </div>
-        <p className={'help' + (kgErr ? ' err' : '')}>
-          {kgErr ? 'Weight must be between 30 and 200 kg.' : 'Used for W/kg. FTP and weight are remembered in this browser.'}</p>
-      </div>
+      <FtpField key={ftp} ftp={ftp} setFtp={setFtp} />
+      <WeightField key={kg ?? ''} kg={kg} setKg={setKg} />
       <div className="field">
         <label htmlFor="smooth">Power number</label>
         <div className="inline">
@@ -414,7 +368,7 @@ function Devices({ status, recording }) {
   const scan = status.scan || {};
   const choice = status.devices || {};
   const [showOther, setShowOther] = useState(false);
-  useEffect(() => { post('/devices/scan'); }, []);   // one short scan each time the panel opens
+  useEffect(() => { post('/devices/scan'); }, []);   // a short Bluetooth scan while the panel is open (it mounts on open)
   const scanning = scan.state === 'scanning';
   const found = scan.found || [];
   const main = found.filter(d => d.kind !== 'other'), other = found.filter(d => d.kind === 'other');
@@ -523,7 +477,7 @@ function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth }) {
   );
 }
 
-function Stats({ hist, st, ftp, kg, more, setMore, mode }) {
+const Stats = memo(function Stats({ hist, st, ftp, kg, more, setMore, mode }) {
   const done = mode === 'finished';
   const p3 = mode === 'recording' ? avg3(hist) || 0 : st.avgP || 0;
   const IF = st.np ? st.np / ftp : null, tss = tssOf(hist.length, st.np, ftp);
@@ -554,7 +508,7 @@ function Stats({ hist, st, ftp, kg, more, setMore, mode }) {
         {more ? 'Fewer stats' : 'More stats'}</button>
     </section>
   );
-}
+});
 
 // ------------------------------------------------------------------ charts
 const CHARTS = [
@@ -582,19 +536,10 @@ function xRange(n, win, planEnd = 0) {
   return [x0, x0 + win - 1];
 }
 
-function useWidth(ref) {
-  const [w, setW] = useState(0);
-  useLayoutEffect(() => {
-    const ro = new ResizeObserver(([e]) => setW(Math.round(e.contentRect.width)));
-    ro.observe(ref.current);
-    return () => ro.disconnect();
-  }, [ref]);
-  return w;
-}
-
+// The canvas is drawn imperatively: the one effect here keeps its pixels in sync with the data.
 function Chart({ c, hist, laps, ftp, win, version, hover, setHover, workout }) {
   const cv = useRef(null);
-  const W = useWidth(cv), H = c.h;
+  const [cvRef, W] = useWidth(cv), H = c.h;
   const pad = { l: 40, r: 10, t: 8, b: c.xaxis ? 22 : 6 };
   const [x0, x1] = xRange(hist.length, win, workout ? workout.total : 0);
   const plan = useMemo(() => (workout ? plannedLine(workout, ftp, c.key) : []), [workout, ftp, c.key]);
@@ -705,45 +650,48 @@ function Chart({ c, hist, laps, ftp, win, version, hover, setHover, workout }) {
     <div className="chart">
       <div className="title"><span className="key" style={{ background: `var(${c.color})` }} />{c.title}
         {plan.length > 0 && <span className="plan-key"><span className="key" />workout target (shaded = on target)</span>}</div>
-      <canvas ref={cv} style={{ height: H }} onMouseMove={onMove} onMouseLeave={() => setHover(null, null)}
+      <canvas ref={cvRef} style={{ height: H }} onMouseMove={onMove} onMouseLeave={() => setHover(null, null)}
               role="img" aria-label={chartSummary(c, hist)} />
     </div>
   );
 }
 
 function chartSummary(c, hist) {
-  const v = hist.map(s => s[c.key]).filter(nz);
-  if (!v.length) return `${c.name}: no data yet`;
-  const avg = Math.round(v.reduce((a, b) => a + b, 0) / v.length);
-  return `${c.name} over ${fmtT(hist.length)}: now ${v[v.length - 1]} ${c.unit}, average ${avg}, max ${Math.max(...v)}`;
+  let n = 0, sum = 0, max = -Infinity, last;       // one pass, no spread: rides can be hours long
+  for (const s of hist) { const v = s[c.key]; if (nz(v)) { n++; sum += v; if (v > max) max = v; last = v; } }
+  if (!n) return `${c.name}: no data yet`;
+  return `${c.name} over ${fmtT(hist.length)}: now ${last} ${c.unit}, average ${Math.round(sum / n)}, max ${max}`;
 }
 
+const TipRow = ({ col, k, v }) => (
+  <div className="row"><span className="k"><i style={{ background: col }} />{k}</span><b>{v}</b></div>
+);
+
 function Tooltip({ s, pos, ftp, boxRef }) {
-  const ref = useRef(null);
-  const [left, setLeft] = useState(0);
-  useLayoutEffect(() => {
-    if (!ref.current || !pos) return;
-    const bw = boxRef.current.getBoundingClientRect().width, tw = ref.current.offsetWidth;
-    setLeft(pos.x + 14 + tw > bw - 8 ? pos.x - tw - 14 : pos.x + 14);
-  }, [pos, s, boxRef]);
   if (!s || !pos) return null;
   const z = s.power_w > 0 ? ZONES[zoneOf(s.power_w, ftp)].n : '';
-  const Row = ({ col, k, v }) => (
-    <div className="row"><span className="k"><i style={{ background: col }} />{k}</span><b>{v}</b></div>
-  );
+  // Beside the pointer, flipped to its left near the right edge. The tip's width is only known
+  // once it is in the page, so this ref callback (new each render) places it before paint.
+  const place = el => {
+    if (!el) return;
+    const bw = boxRef.current.getBoundingClientRect().width, tw = el.offsetWidth;
+    el.style.left = `${pos.x + 14 + tw > bw - 8 ? pos.x - tw - 14 : pos.x + 14}px`;
+  };
   return (
-    <div className="tip" ref={ref} style={{ display: 'block', left, top: Math.max(8, pos.y - 40) }}>
+    <div className="tip" ref={place} style={{ display: 'block', top: Math.max(8, pos.y - 40) }}>
       <div className="t">{fmtT(s.t)} · lap {s.lap}</div>
-      <Row col="var(--power)" k="Power" v={`${s.power_w} W ${z}`} />
-      <Row col="var(--cadence)" k="Cadence" v={`${s.cadence_rpm} rpm`} />
-      <Row col="var(--hr)" k="Heart rate" v={nz(s.heart_rate_bpm) ? `${s.heart_rate_bpm} bpm` : '–'} />
-      <Row col="var(--speed)" k="Speed" v={nz(s.speed_kmh) ? `${s.speed_kmh.toFixed(1)} km/h` : '–'} />
-      {nz(s.grade_pct) && <Row col="var(--text-secondary)" k="Grade" v={`${fmtGrade(s.grade_pct)} %`} />}
+      <TipRow col="var(--power)" k="Power" v={`${s.power_w} W ${z}`} />
+      <TipRow col="var(--cadence)" k="Cadence" v={`${s.cadence_rpm} rpm`} />
+      <TipRow col="var(--hr)" k="Heart rate" v={nz(s.heart_rate_bpm) ? `${s.heart_rate_bpm} bpm` : '–'} />
+      <TipRow col="var(--speed)" k="Speed" v={nz(s.speed_kmh) ? `${s.speed_kmh.toFixed(1)} km/h` : '–'} />
+      {nz(s.grade_pct) && <TipRow col="var(--text-secondary)" k="Grade" v={`${fmtGrade(s.grade_pct)} %`} />}
     </div>
   );
 }
 
-function Charts({ win, setWin, ...props }) {
+// Charts, Stats, time in zone and laps redraw once per ride second (`version` / `st`), not on
+// every live packet: they are memoized and the history is one array that grows in place.
+const Charts = memo(function Charts({ win, setWin, ...props }) {
   const [hover, setHoverT] = useState(null);
   const [pos, setPos] = useState(null);
   const box = useRef(null);
@@ -762,10 +710,10 @@ function Charts({ win, setWin, ...props }) {
       <Tooltip s={hover !== null ? props.hist[hover] : null} pos={pos} ftp={props.ftp} boxRef={box} />
     </div>
   );
-}
+});
 
 // ------------------------------------------------------------------ side panels
-function TimeInZone({ st, ftp }) {
+const TimeInZone = memo(function TimeInZone({ st, ftp }) {
   const tot = st.tiz.reduce((a, b) => a + b, 0) || 1, mx = Math.max(...st.tiz, 1);
   return (
     <div className="panel">
@@ -784,9 +732,9 @@ function TimeInZone({ st, ftp }) {
       </div>
     </div>
   );
-}
+});
 
-function Laps({ hist, laps, ftp, recording }) {
+const Laps = memo(function Laps({ hist, laps, ftp, recording }) {   // `version` prop: see Charts
   const rows = laps.map((start, i) => {
     const end = i + 1 < laps.length ? laps[i + 1] : hist.length;
     return { i, cur: recording && i === laps.length - 1, ls: stats(hist.slice(start, end), ftp, start > 0 ? hist[start - 1] : null) };
@@ -810,7 +758,7 @@ function Laps({ hist, laps, ftp, recording }) {
       </div>
     </div>
   );
-}
+});
 
 // ------------------------------------------------------------------ Strava / Garmin: download the .FIT and open
 // the site's upload page in a new tab, ready to drag the file in (Strava's API needs a paid plan).
@@ -870,11 +818,15 @@ function exportCsv(hist) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+// Phones and tablets get the battery-saver live rate by default. Read once, like PRESS.
+const TOUCH = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+const NOT_SENT = { fit: null, to: [] };
+const LAP_FLASH_S = 3;                               // "Lap N started" for the lap's first seconds
+
 function App() {
   const [smooth, setSmooth] = useStored('powerSmooth', 0);
   const [liveRate, setLiveRate] = useStored('liveRate', 'auto');
-  const touch = useMemo(() => window.matchMedia('(pointer: coarse)').matches, []);
-  const rate = liveRate === 'saver' || (liveRate === 'auto' && touch) ? 2 : 0;
+  const rate = liveRate === 'saver' || (liveRate === 'auto' && TOUCH) ? 2 : 0;
   const { hist, laps, status, online, version, preview, now, recent } = useLiveFeed(rate);
   const ride = status.ride || {};
   const mode = ride.state === 'recording' ? 'recording' : ride.state === 'finished' ? 'finished' : 'ready';
@@ -884,39 +836,44 @@ function App() {
   const [more, setMore] = useStored('moreStats', false);
   const [wo, setWo] = useStored('workout', null);
   const [woSound, setWoSound] = useStored('workoutSound', true);
-  const [sent, setSent] = useStored('sent', { fit: null, to: [] });   // which buttons were used for which .fit
+  const [sent, setSent] = useStored('sent', NOT_SENT);   // which buttons were used for which .fit
+
   const [panel, setPanel] = useState(null);           // 'devices' | 'settings' | null
   const toggle = p => setPanel(o => (o === p ? null : p));
+  const closePanel = useCallback(() => setPanel(null), []);
+  // Adjusted while rendering, when the logger's answer arrives (no effect, no extra paint):
+  // open the device panel once when no trainer is remembered yet (or it was turned off) ...
   const devChoice = (status.devices || {}).trainer;
-  const askedDevices = useRef(false);
-  useEffect(() => {      // open the device panel once when no trainer is remembered yet (or it was turned off)
-    if (!devChoice || askedDevices.current) return;
-    askedDevices.current = true;
+  const [askedDevices, setAskedDevices] = useState(false);
+  if (devChoice && !askedDevices) {
+    setAskedDevices(true);
     if (devChoice.mode !== 'device' && mode !== 'recording') setPanel('devices');
-  }, [devChoice]); // eslint-disable-line
+  }
+  // ... and close the panels when a ride starts, so the numbers are clear.
+  const [prevMode, setPrevMode] = useState(mode);
+  if (prevMode !== mode) {
+    setPrevMode(mode);
+    if (mode === 'recording') setPanel(null);
+  }
   const [finishArmed, pressFinish] = useArmed(ride.state);
   const [startArmed, pressStart] = useArmed(ride.state);
-  const [lapFlash, setLapFlash] = useState(0);
+  const lapStart = laps[laps.length - 1] || 0;
+  const lapFlash = mode === 'recording' && laps.length > 1 && hist.length - lapStart < LAP_FLASH_S ? laps.length : 0;
 
-  const st = useMemo(() => stats(hist, ftp, null), [version, ftp]); // eslint-disable-line
+  const st = useMemo(() => stats(hist, ftp, null), [version, ftp]); // eslint-disable-line react-hooks/exhaustive-deps -- hist grows in place
 
   // the finished ride is "unsaved" until its .FIT was downloaded from here
   const unsaved = mode === 'finished' && ride.fit && !(sent && sent.fit === ride.fit && sent.to.length);
   // Send to… also downloads the file, so it marks Download .FIT as done too
   const markSent = (...to) => setSent(s => ({ fit: ride.fit, to: [...new Set([...(s && s.fit === ride.fit ? s.to : []), ...to])] }));
 
-  useEffect(() => { if (mode === 'recording') setPanel(null); }, [mode]);
-  const prevMode = useRef(mode);
+  // The ride state on <html> (for CSS), and back to the top when a ride finishes.
+  const lastMode = useRef(mode);
   useEffect(() => {
-    if (prevMode.current === 'recording' && mode === 'finished') window.scrollTo({ top: 0 });
-    prevMode.current = mode;
+    document.documentElement.dataset.ride = mode;
+    if (lastMode.current === 'recording' && mode === 'finished') window.scrollTo({ top: 0 });
+    lastMode.current = mode;
   }, [mode]);
-  useEffect(() => {
-    if (mode !== 'recording' || laps.length < 2) return;
-    setLapFlash(laps.length);
-    const t = setTimeout(() => setLapFlash(0), 3000);
-    return () => clearTimeout(t);
-  }, [laps.length]); // eslint-disable-line
 
   const act = {
     finishArmed, startArmed,
@@ -924,54 +881,51 @@ function App() {
     finish: () => pressFinish(() => post('/finish')),
     start: () => unsaved ? pressStart(() => post('/start')) : post('/start'),
   };
-  const actRef = useRef(act); actRef.current = act;
-  const modeRef = useRef(mode); modeRef.current = mode;
-
-  useEffect(() => {
-    const k = e => {
-      if (e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
-      const key = e.key.toLowerCase(), a = actRef.current, m = modeRef.current;
-      if (key === 'l' && m === 'recording') a.lap();
-      else if (key === 'f' && m === 'recording') a.finish();
-      else if (key === 's' && m !== 'recording') a.start();
-    };
-    document.addEventListener('keydown', k);
-    return () => document.removeEventListener('keydown', k);
-  }, []);
-
-  useEffect(() => { document.documentElement.dataset.ride = mode; }, [mode]);
 
   // trainer control: climb / ERG, workout steps drive it while recording
   const ctl = status.control;
-  const ctlRef = useRef(ctl); ctlRef.current = ctl;
-  useControlKeys(ctlRef);
   const woAt = wo && mode === 'recording' ? workoutAt(wo, hist.length, ftp) : null;
   useWorkoutControl({ ctl, at: woAt, recording: mode === 'recording' });
   const woDrives = wo && wo.segs.some(s => s.grade != null) ? 'Workout steps with a grade set it when they start.'
                  : wo && ctl && ctl.mode === 'erg' ? 'The workout sets the power at each step.' : null;
   const showCtl = ctl && (status.connected || ctl.enabled || ctl.msg);
 
+  // Keys: S start, L lap, F finish, − / + grade or ERG power. One document listener for the
+  // app's lifetime; useEvent lets it see the current ride and control state.
+  const onKey = useEvent(e => {
+    if (e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+    const key = e.key.toLowerCase();
+    if (key === 'l' && mode === 'recording') act.lap();
+    else if (key === 'f' && mode === 'recording') act.finish();
+    else if (key === 's' && mode !== 'recording') act.start();
+    else controlKey(e, ctl);
+  });
+  useEffect(() => {
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onKey]);
+
+  // live numbers for the workout band: the latest packet while fresh, else the last second
+  const fresh = now && Date.now() - now.at < FRESH_MS, last = hist.length ? hist[hist.length - 1] : null;
+
   return (
     <div className="wrap">
       <Header status={status} ride={ride} act={act} panel={panel} toggle={toggle} />
-      {panel === 'devices' && <Drawer id="devices" title="Devices" onClose={() => setPanel(null)}>
+      {panel === 'devices' && <Drawer id="devices" title="Devices" onClose={closePanel}>
         <Devices status={status} recording={mode === 'recording'} /></Drawer>}
-      {panel === 'settings' && <Drawer id="settings" title="Settings" onClose={() => setPanel(null)}><Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
+      {panel === 'settings' && <Drawer id="settings" title="Settings" onClose={closePanel}><Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
                                  onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} recording={mode === 'recording'}
                                  workout={{ wo, setWo, sound: woSound, setSound: setWoSound }} /></Drawer>}
       {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
       <RideStrip ride={ride} seconds={hist.length} startArmed={startArmed} lapFlash={lapFlash}
-                 sent={sent || { to: [] }} onDownload={markSent} />
+                 sent={sent || NOT_SENT} onDownload={markSent} />
       {showCtl && <ClimbBand ctl={ctl} ftp={ftp} follow={woDrives} />}
-      {wo && mode !== 'finished' && (() => {
-        const fresh = now && Date.now() - now.at < FRESH_MS;
-        return <WorkoutBand wo={wo} t={hist.length} mode={mode} ftp={ftp} sound={woSound} onRemove={() => setWo(null)}
-                            power={fresh ? livePower(now, recent, 3) : hist.length ? avg3(hist) : null}
-                            cadence={fresh ? now.cadence_rpm : hist.length ? hist[hist.length - 1].cadence_rpm : null}
-                            hr={fresh ? now.heart_rate_bpm : hist.length ? hist[hist.length - 1].heart_rate_bpm : null}
-                            speed={fresh ? now.speed_kmh : hist.length ? hist[hist.length - 1].speed_kmh : null} />;
-      })()}
+      {wo && mode !== 'finished' ? <WorkoutBand wo={wo} t={hist.length} mode={mode} ftp={ftp} sound={woSound} onRemove={() => setWo(null)}
+                            power={fresh ? livePower(now, recent, 3) : last ? avg3(hist) : null}
+                            cadence={fresh ? now.cadence_rpm : last ? last.cadence_rpm : null}
+                            hr={fresh ? now.heart_rate_bpm : last ? last.heart_rate_bpm : null}
+                            speed={fresh ? now.speed_kmh : last ? last.speed_kmh : null} /> : null}
       <Hero hist={hist} laps={laps} st={st} ftp={ftp} preview={mode === 'recording' ? null : preview} mode={mode}
             now={now} recent={recent} smooth={smooth} />
       <Stats hist={hist} st={st} ftp={ftp} kg={kg} more={more} setMore={setMore} mode={mode} />
@@ -980,7 +934,7 @@ function App() {
                 workout={wo} />
         <div className="side">
           <TimeInZone st={st} ftp={ftp} />
-          <Laps hist={hist} laps={laps} ftp={ftp} recording={mode === 'recording'} />
+          <Laps hist={hist} laps={laps} ftp={ftp} recording={mode === 'recording'} version={version} />
         </div>
       </section>
     </div>
