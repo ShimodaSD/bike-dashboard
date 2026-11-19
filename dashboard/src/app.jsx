@@ -111,6 +111,19 @@ const Pill = ({ col, long, short }) => (
 // Armed look: red fill plus a bar that drains over the 4 s, so the timeout is visible.
 const armedCls = (armed, base = '') => (armed ? `${base} danger armed`.trim() : base);
 
+// Sprint b logo: an italic b whose stem is the tallest bar of a rising chart and whose bowl is a wheel.
+const Logo = () => (
+  <svg className="logo" viewBox="0 36 212 184" aria-hidden="true" focusable="false">
+    <g transform="translate(26 0) skewX(-12)">
+      <rect x="20" y="168" width="22" height="48" rx="11" fill="var(--power)" />
+      <rect x="54" y="128" width="22" height="88" rx="11" fill="var(--power)" />
+      <rect x="88" y="40" width="24" height="176" rx="12" fill="var(--text-primary)" />
+      <circle cx="158" cy="160" r="46" fill="none" stroke="var(--text-primary)" strokeWidth="24" />
+      <circle cx="158" cy="160" r="12" fill="var(--hr)" />
+    </g>
+  </svg>
+);
+
 const Kbd = ({ k }) => <kbd aria-hidden="true">{k}</kbd>;
 
 function Header({ status, ride, act, panel, toggle }) {
@@ -121,7 +134,7 @@ function Header({ status, ride, act, panel, toggle }) {
   const hrPill = HR_STATUS[hr.state];
   return (
     <header>
-      <h1>Bike <span>Live training</span></h1>
+      <h1><Logo />Bike <span>Live training</span></h1>
       <button className={'pills' + (devicesOpen ? ' on' : '')} onClick={() => toggle('devices')}
               aria-expanded={devicesOpen} aria-controls="devices" title="Choose the trainer and heart-rate device">
         <Pill col={col} long={txt(status)} short={short} />
