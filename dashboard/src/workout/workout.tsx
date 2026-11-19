@@ -135,6 +135,19 @@ export function offTarget(at: WorkoutAt | null, power: Reading, cadence: Reading
   return null;
 }
 
+// The beep rule. Called on every change of the live numbers (and once a second while recording):
+// beep once the rider has been off target for more than 7 s without a break, then at most every
+// 15 s. Back on target (or a new step's grace time) resets the 7 s. `c` is updated in place.
+export interface BeepClock { offSince: number | null; lastBeep: number }
+export function beepDue(c: BeepClock, off: OffKind | null, now: number, sound: boolean): boolean {
+  if (!off) { c.offSince = null; return false; }
+  if (c.offSince === null) c.offSince = now;
+  if (!sound || now - c.offSince <= BEEP_AFTER_MS) return false;
+  if (now - c.lastBeep < BEEP_GAP_MS) return false;
+  c.lastBeep = now;
+  return true;
+}
+
 declare global { interface Window { webkitAudioContext?: typeof AudioContext } }
 
 let ctx: AudioContext | undefined;
@@ -230,13 +243,9 @@ export function WorkoutBand({ wo, t, mode, ftp, power, cadence, hr, speed, sound
   const d = off && at ? offDetail(off, at, power, cadence, hr, speed) : null;   // offTarget is null without a step
   // Sound is an outside system: the effect checks on each change (every packet / second) how long
   // the rider has been off target. Back on target resets the clock.
-  const lastBeep = useRef(0), offSince = useRef<number | null>(null);
+  const clock = useRef<BeepClock>({ offSince: null, lastBeep: 0 });
   useEffect(() => {
-    if (!off) { offSince.current = null; return; }
-    const n = Date.now();
-    if (offSince.current === null) offSince.current = n;
-    if (!sound || n - offSince.current <= BEEP_AFTER_MS) return;
-    if (n - lastBeep.current >= BEEP_GAP_MS) { lastBeep.current = n; beep(off); }
+    if (beepDue(clock.current, off, Date.now(), sound)) beep(off!);
   }, [off, t, sound, power, cadence, hr, speed]);
 
   const prof = profileOf(wo, ftp);

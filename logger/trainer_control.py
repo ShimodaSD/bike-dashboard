@@ -41,6 +41,8 @@ OP_START = 0x07
 OP_SIMULATION = 0x11
 OP_RESPONSE = 0x80
 
+NO_CONTROL_POINT = "This trainer has no FTMS control point, so it can't simulate climbs."
+
 RESULTS = {0x01: "success", 0x02: "not supported", 0x03: "invalid value",
            0x04: "failed", 0x05: "control not permitted"}
 
@@ -214,8 +216,7 @@ class TrainerControl(ControlBase):
         except Exception:
             pass
         if not self.cp:
-            self._set(state="unsupported", enabled=False,
-                      msg="This trainer has no FTMS control point, so it can't simulate climbs.")
+            self._set(state="unsupported", enabled=False, msg=NO_CONTROL_POINT)
             return
         if self.enabled:                          # reconnected while on: take control again, at 0 %
             self.mode, self.grade = "sim", 0.0
@@ -265,7 +266,7 @@ class TrainerControl(ControlBase):
             self._set(state="waiting")
             return
         if not self.cp:
-            self._set(state="unsupported", enabled=False)
+            self._set(state="unsupported", enabled=False, msg=NO_CONTROL_POINT)
             return
         self._start_worker()
 

@@ -14,13 +14,12 @@
 // rendering. Effects are kept for real outside systems only: feeding the uPlot charts, document key
 // and focus handling, the device scan while that panel is open, and the trainer / audio.
 import { memo, useState, useEffect, useRef, useMemo, useCallback, type CSSProperties, type ReactNode } from 'react';
-import { createRoot } from 'react-dom/client';
 import { WorkoutBand, WorkoutSettings, workoutAt } from './workout/workout';
 import { ClimbBand, useWorkoutControl, controlKey } from './control/climb';
 import { useLiveFeed, type LiveNow, type RecentPower } from './hooks/feed';
 import { useStored } from './hooks/stored';
 import { useArmed, useEvent } from './hooks/hooks';
-import { ZONES, nz, fmtT, zoneOf } from './util/ride';
+import { ZONES, nz, fmtT, zoneOf, stats, bestPower, tssOf, fmtTss, avg3, livePower, type RideStats } from './util/ride';
 import { Charts } from './charts/charts';
 import type { DeviceChoice, DeviceKind, DeviceRole, FoundDevice, HrState, HrStatus, LiveValues, RideState,
   RideStatus, Sample, ScanStatus, Status, TrainerState } from './types/feed';
@@ -39,42 +38,6 @@ const CSV_COLS: (keyof Sample)[] = ['t', 'timestamp_utc', 'lap', 'power_w', 'cad
                   'heart_rate_bpm', 'distance_m', 'energy_kj', 'grade_pct'];
 
 const r0 = (v: number | null | undefined) => (nz(v) ? Math.round(v) : '–');
-
-// Summary over a slice of 1 Hz samples. `before` = the sample just before the slice (for distance/kJ deltas).
-interface RideStats {
-  n: number; moving: number; avgP: number | null; np: number | null; maxP: number | null;
-  avgCad: number | null; avgSpd: number | null; avgHr: number | null; maxHr: number | null;
-  dist: number; kj: number; tiz: number[];        // seconds in each power zone
-}
-function stats(a: Sample[], ftp: number, before: Sample | null): RideStats {
-  const out: RideStats = { n: a.length, moving: 0, avgP: null, np: null, maxP: null, avgCad: null, avgSpd: null,
-                avgHr: null, maxHr: null, dist: 0, kj: 0, tiz: new Array(7).fill(0) };
-  if (!a.length) return out;
-  let sp = 0, mc = 0, sc = 0, cc = 0, ss = 0, sn = 0, sh = 0, hn = 0, mh = 0, mp = 0;
-  let roll = 0, sum4 = 0, n4 = 0;
-  a.forEach((s, i) => {
-    const p = s.power_w || 0;
-    const moving = p > 0 || (s.cadence_rpm || 0) > 0;
-    if (moving) { out.moving++; sp += p; mc++; out.tiz[zoneOf(p, ftp)]++; }
-    if (p > mp) mp = p;
-    if (s.cadence_rpm > 0) { sc += s.cadence_rpm; cc++; }
-    if (moving && nz(s.speed_kmh)) { ss += s.speed_kmh; sn++; }
-    if (nz(s.heart_rate_bpm)) { sh += s.heart_rate_bpm; hn++; if (s.heart_rate_bpm > mh) mh = s.heart_rate_bpm; }
-    roll += p; if (i >= 30) roll -= a[i - 30].power_w || 0;          // 30 s rolling average
-    if (i >= 29) { sum4 += Math.pow(roll / 30, 4); n4++; }
-  });
-  out.avgP = mc ? sp / mc : null;
-  out.maxP = mp;
-  out.np = n4 ? Math.pow(sum4 / n4, 0.25) : null;
-  out.avgCad = cc ? sc / cc : null;
-  out.avgSpd = sn ? ss / sn : null;
-  out.avgHr = hn ? sh / hn : null;
-  out.maxHr = hn ? mh : null;
-  const last = a[a.length - 1];
-  out.dist = last.distance_m - (before ? before.distance_m : 0);
-  out.kj = last.energy_kj - (before ? before.energy_kj : 0);
-  return out;
-}
 
 // ------------------------------------------------------------------ live feed (SSE): hooks/feed.js
 // Instant numbers older than this are ignored (trainer stopped sending).
@@ -131,7 +94,7 @@ interface Actions { finishArmed: boolean; startArmed: boolean; lap: () => void; 
 interface HeaderProps {
   status: Partial<Status>; ride: Partial<RideStatus>; act: Actions; panel: Panel | null; toggle: (p: Panel) => void;
 }
-function Header({ status, ride, act, panel, toggle }: HeaderProps) {
+export function Header({ status, ride, act, panel, toggle }: HeaderProps) {
   const settingsOpen = panel === 'settings', devicesOpen = panel === 'devices';
   const recording = ride.state === 'recording';
   const [col, txt, short] = (status.state && STATUS[status.state]) || ['--text-muted', () => status.state || 'Connecting…', 'Connecting…'];
@@ -239,7 +202,7 @@ interface SettingsProps {
   onCsv: () => void; canCsv: boolean; smooth: number; setSmooth: (v: number) => void;
   liveRate: LiveRate; setLiveRate: (v: LiveRate) => void; recording: boolean; workout: WorkoutSettingsProps;
 }
-function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout }: SettingsProps) {
+export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout }: SettingsProps) {
   return (
     <section className="settings">
       <FtpField key={ftp} ftp={ftp} setFtp={setFtp} />
@@ -389,7 +352,7 @@ function DeviceRow({ d, choice }: { d: FoundDevice; choice: Partial<Record<Devic
   );
 }
 
-function Devices({ status, recording }: { status: Partial<Status>; recording: boolean }) {
+export function Devices({ status, recording }: { status: Partial<Status>; recording: boolean }) {
   const scan: Partial<ScanStatus> = status.scan || {};
   const choice = status.devices || {};
   const [showOther, setShowOther] = useState(false);
@@ -440,26 +403,7 @@ function Tile({ label, keyColor, value, unit, sub, className = '', badge, style,
   );
 }
 
-// Best average power over any `sec`-second stretch of the ride (null if the ride is shorter).
-function bestPower(h: Sample[], sec: number) {
-  if (h.length < sec) return null;
-  let sum = 0, best = 0;
-  h.forEach((s, i) => { sum += s.power_w || 0; if (i >= sec) sum -= h[i - sec].power_w || 0; if (i >= sec - 1 && sum > best) best = sum; });
-  return best / sec;
-}
-const tssOf = (n: number, np: number | null, ftp: number) => (np ? ((n * np * (np / ftp)) / (ftp * 3600)) * 100 : null);
-const fmtTss = (t: number | null) => (t === null ? '–' : t < 10 ? t.toFixed(1) : Math.round(t));
-
-const avg3 = (h: LiveValues[]) => { const w = h.slice(-3); return w.length ? w.reduce((t, s) => t + (s.power_w || 0), 0) / w.length : null; };
-
 // Recording: live ride.  Ready: live preview (nothing saved).  Finished: the ride's summary.
-// Power shown live: the latest packet (instant) or the mean of the last `smooth` seconds of packets.
-function livePower(now: LiveNow, recent: RecentPower[], smooth: number) {
-  if (!smooth) return now.power_w;
-  const w = recent.filter(x => now.at - x.at < smooth * 1000);
-  return w.length ? w.reduce((t, x) => t + x.p, 0) / w.length : now.power_w;
-}
-
 interface HeroProps {
   hist: Sample[]; laps: number[]; st: RideStats; ftp: number; preview: LiveValues | null; mode: Mode;
   now: LiveNow | null; recent: RecentPower[]; smooth: number;
@@ -619,7 +563,7 @@ interface RideStripProps {
   ride: Partial<RideStatus>; seconds: number; startArmed: boolean; lapFlash: number; sent: Sent;
   onDownload: (...to: string[]) => void;
 }
-function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownload }: RideStripProps) {
+export function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownload }: RideStripProps) {
   const dir = ride.dir ? `${ride.dir}/` : 'the ride folder';
   let cls = 'ready', body: ReactNode;
   if (ride.state === 'recording') {
@@ -668,7 +612,7 @@ const TOUCH = typeof window !== 'undefined' && window.matchMedia('(pointer: coar
 const NOT_SENT: Sent = { fit: null, to: [] };
 const LAP_FLASH_S = 3;                               // "Lap N started" for the lap's first seconds
 
-function App() {
+export function App() {
   const [smooth, setSmooth] = useStored('powerSmooth', 0);
   const [liveRate, setLiveRate] = useStored<LiveRate>('liveRate', 'auto');
   const rate = liveRate === 'saver' || (liveRate === 'auto' && TOUCH) ? 2 : 0;
@@ -786,4 +730,3 @@ function App() {
   );
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
