@@ -1,25 +1,28 @@
 // Ride timeline: power, cadence, heart rate and speed as four uPlot charts that share one
 // crosshair. "Whole ride" can be zoomed (drag across a chart, pinch, or ctrl + scroll) and
 // panned (sideways swipe); double-click or Reset zoom goes back to the whole ride.
-import React, { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { plannedLine, powerTol, CAD_TOL, HR_TOL, SPEED_TOL } from '../workout/workout.jsx';
-import { fmtGrade } from '../control/climb.jsx';
-import { ZONES, nz, fmtT, zoneOf } from '../util/ride.js';
-import { useEvent } from '../hooks/hooks.js';
-import { createPlot, columns, niceStep, MIN_SPAN } from './plot.js';
+import { memo, useState, useEffect, useRef, useMemo, useCallback, type RefObject } from 'react';
+import { plannedLine, powerTol, CAD_TOL, HR_TOL, SPEED_TOL } from '../workout/workout';
+import { fmtGrade } from '../control/climb';
+import { ZONES, nz, fmtT, zoneOf } from '../util/ride';
+import { useEvent } from '../hooks/hooks';
+import { createPlot, columns, niceStep, MIN_SPAN, type ChartDef, type PlotHandlers, type PlotMeta } from './plot';
+import type uPlot from 'uplot';
+import type { Sample, SeriesKey } from '../types/feed';
+import type { PlanPoint, Workout } from '../types/workout';
 
-const CHARTS = [
+const CHARTS: ChartDef[] = [
   { key: 'power_w', color: '--power', fill: true, min: 0, floorMax: 300, ftpRef: true, title: 'Power (W) · dashed line = FTP', name: 'Power', unit: 'W', h: 170 },
   { key: 'cadence_rpm', color: '--cadence', min: 0, floorMax: 120, title: 'Cadence (rpm)', name: 'Cadence', unit: 'rpm', h: 100 },
   { key: 'heart_rate_bpm', color: '--hr', autoMin: true, floorMax: 160, title: 'Heart rate (bpm)', name: 'Heart rate', unit: 'bpm', h: 100 },
   { key: 'speed_kmh', color: '--speed', min: 0, floorMax: 40, title: 'Speed (km/h)', name: 'Speed', unit: 'km/h', h: 124, xaxis: true },
 ];
-const TOL = { power_w: powerTol, cadence_rpm: () => CAD_TOL, heart_rate_bpm: () => HR_TOL, speed_kmh: () => SPEED_TOL };
+const TOL: Record<SeriesKey, (v: number) => number> = { power_w: powerTol, cadence_rpm: () => CAD_TOL, heart_rate_bpm: () => HR_TOL, speed_kmh: () => SPEED_TOL };
 
 // Whole ride until it is longer than the window, then the last `win` seconds.
 // With a workout loaded the axis also shows what is coming: the whole plan, or the
 // next third of the window.
-function xRange(n, win, planEnd = 0) {
+function xRange(n: number, win: number, planEnd = 0): [number, number] {
   if (!planEnd) {
     if (win && n > win) return [n - win, n - 1];
     return [0, Math.max(n - 1, 59)];
@@ -30,7 +33,7 @@ function xRange(n, win, planEnd = 0) {
 }
 
 // y axis for the samples and targets in view: floor maximum, FTP headroom, round steps
-function yRange(c, hist, x0, x1, ftp, plan) {
+function yRange(c: ChartDef, hist: Sample[], x0: number, x1: number, ftp: number, plan: PlanPoint[]) {
   let ymax = c.floorMax, ymin = c.min ?? 0, vmin = Infinity, n = 0;
   for (let i = Math.max(0, Math.ceil(x0)), e = Math.min(hist.length - 1, Math.floor(x1)); i <= e; i++) {
     const v = hist[i][c.key];
@@ -50,13 +53,17 @@ function yRange(c, hist, x0, x1, ftp, plan) {
 
 // The uPlot instance lives outside React: a ref callback creates it (and resizes it with the
 // box), and the one effect hands it the data and scales once per ride second.
-const Chart = memo(function Chart({ c, hist, laps, ftp, version, x0, x1, workout, zoomable, zoomed, on }) {
-  const plot = useRef(null);
-  const meta = useRef({ c, laps: [0], plan: [], ftp, x0, x1, ymin: 0, ymax: 1, step: 1, tol: TOL[c.key] }).current;
+interface ChartProps {
+  c: ChartDef; hist: Sample[]; laps: number[]; ftp: number; version: number; x0: number; x1: number;
+  workout: Workout | null; zoomable: boolean; zoomed: boolean; on: PlotHandlers;
+}
+const Chart = memo(function Chart({ c, hist, laps, ftp, version, x0, x1, workout, zoomable, zoomed, on }: ChartProps) {
+  const plot = useRef<uPlot | null>(null);
+  const meta = useRef<PlotMeta>({ c, laps: [0], plan: [], ftp, x0, x1, ymin: 0, ymax: 1, step: 1, tol: TOL[c.key] }).current;
   const plan = useMemo(() => (workout ? plannedLine(workout, ftp, c.key) : []), [workout, ftp, c.key]);
 
-  const ro = useRef(null);
-  const ref = useCallback(node => {
+  const ro = useRef<ResizeObserver | null>(null);
+  const ref = useCallback((node: HTMLDivElement | null) => {
     if (ro.current) { ro.current.disconnect(); ro.current = null; }
     if (plot.current) { plot.current.destroy(); plot.current = null; }
     if (!node) return;
@@ -91,24 +98,25 @@ const Chart = memo(function Chart({ c, hist, laps, ftp, version, x0, x1, workout
   );
 });
 
-function chartSummary(c, hist) {
-  let n = 0, sum = 0, max = -Infinity, last;       // one pass, no spread: rides can be hours long
+function chartSummary(c: ChartDef, hist: Sample[]) {
+  let n = 0, sum = 0, max = -Infinity, last: number | undefined;       // one pass, no spread: rides can be hours long
   for (const s of hist) { const v = s[c.key]; if (nz(v)) { n++; sum += v; if (v > max) max = v; last = v; } }
   if (!n) return `${c.name}: no data yet`;
   return `${c.name} over ${fmtT(hist.length)}: now ${last} ${c.unit}, average ${Math.round(sum / n)}, max ${max}`;
 }
 
-const TipRow = ({ col, k, v }) => (
+const TipRow = ({ col, k, v }: { col: string; k: string; v: string }) => (
   <div className="row"><span className="k"><i style={{ background: col }} />{k}</span><b>{v}</b></div>
 );
 
-function Tooltip({ s, pos, ftp, boxRef }) {
+interface TipPos { t: number; x: number; y: number }
+function Tooltip({ s, pos, ftp, boxRef }: { s: Sample | null; pos: TipPos | null; ftp: number; boxRef: RefObject<HTMLDivElement> }) {
   if (!s || !pos) return null;
   const z = s.power_w > 0 ? ZONES[zoneOf(s.power_w, ftp)].n : '';
   // Beside the pointer, flipped to its left near the right edge. The tip's width is only known
   // once it is in the page, so this ref callback (new each render) places it before paint.
-  const place = el => {
-    if (!el) return;
+  const place = (el: HTMLDivElement | null) => {
+    if (!el || !boxRef.current) return;
     const bw = boxRef.current.getBoundingClientRect().width, tw = el.offsetWidth;
     el.style.left = `${pos.x + 14 + tw > bw - 8 ? pos.x - tw - 14 : pos.x + 14}px`;
   };
@@ -126,30 +134,34 @@ function Tooltip({ s, pos, ftp, boxRef }) {
 
 // Charts, Stats, time in zone and laps redraw once per ride second (`version`), not on every
 // live packet: they are memoized and the history is one array that grows in place.
-export const Charts = memo(function Charts({ win, setWin, hist, laps, ftp, version, workout }) {
-  const [tip, setTip] = useState(null);             // { t, x, y } under the pointer
-  const [zoom, setZoom] = useState(null);           // [lo, hi] seconds, whole ride only
+interface ChartsProps {
+  win: number; setWin: (win: number) => void; hist: Sample[]; laps: number[]; ftp: number; version: number;
+  workout: Workout | null;
+}
+export const Charts = memo(function Charts({ win, setWin, hist, laps, ftp, version, workout }: ChartsProps) {
+  const [tip, setTip] = useState<TipPos | null>(null);             // under the pointer
+  const [zoom, setZoom] = useState<[number, number] | null>(null);  // [lo, hi] seconds, whole ride only
   const [zoomWin, setZoomWin] = useState(win);
   if (zoomWin !== win) { setZoomWin(win); setZoom(null); }   // a new window starts unzoomed
-  const box = useRef(null);
+  const box = useRef<HTMLDivElement>(null);
 
   const full = xRange(hist.length, win, workout ? workout.total : 0);
   const [x0, x1] = zoom || full;
   const zoomable = win === 0;
 
   // Gestures ask for any range; it is kept inside the ride and no closer than MIN_SPAN.
-  const zoomTo = useEvent((lo, hi) => {
+  const zoomTo = useEvent((lo: number, hi: number) => {
     const [a, b] = full, w = Math.max(MIN_SPAN, hi - lo);
     if (w >= b - a) return setZoom(null);
     const s = Math.min(Math.max(a, lo), b - w);
     setZoom([s, s + w]);
   });
-  const hoverAt = useEvent((t, over, left, top) => {
-    if (t === null || t < 0 || t >= hist.length) return setTip(null);
+  const hoverAt = useEvent((t: number | null, over?: HTMLDivElement, left?: number, top?: number) => {
+    if (t === null || t < 0 || t >= hist.length || !over || left == null || top == null || !box.current) return setTip(null);
     const o = over.getBoundingClientRect(), bx = box.current.getBoundingClientRect();
     setTip({ t, x: o.left - bx.left + left, y: o.top - bx.top + top });
   });
-  const on = useMemo(() => ({ zoom: zoomTo, hover: hoverAt, reset: () => setZoom(null) }), [zoomTo, hoverAt]);
+  const on = useMemo<PlotHandlers>(() => ({ zoom: zoomTo, hover: hoverAt, reset: () => setZoom(null) }), [zoomTo, hoverAt]);
 
   return (
     <div className="charts" ref={box}>
