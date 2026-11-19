@@ -141,8 +141,9 @@ workout. The workout starts with **Start** and follows the ride timer. When powe
 than 7 % (at least 10 W) off the target, cadence more than 8 rpm off, or heart rate more
 than 5 bpm off (checked from 30 s into a step, since heart rate is slow to follow), or speed
 more than 2 km/h off, the band turns
-yellow and it beeps: two rising beeps for too low, one falling beep for too high. It beeps
-at most once every 15 s, and not in the first 8 s of a step. Turn the beep off or test it
+yellow right away. If it stays off for more than 7 s without a break it beeps: two rising
+beeps for too low, one falling beep for too high. Getting back on target resets those 7 s. It
+beeps at most once every 15 s, and not in the first 8 s of a step. Turn the beep off or test it
 under **Settings > Workout**. The logger does not control the trainer (no ERG mode). The
 workout is remembered in the browser, and its targets are drawn on the charts.
 
