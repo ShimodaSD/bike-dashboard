@@ -233,12 +233,23 @@ input[aria-invalid=true] { border-color: var(--critical); }
 .charts .head select { min-height: var(--tap); }
 .chart { position: relative; margin-top: 8px; }
 .chart + .chart { margin-top: 28px; }   /* clear air between one chart's axis and the next chart's title */
-.chart .title + canvas { margin-top: 4px; }
+.chart .title + .plot { margin-top: 4px; }
 .chart .title { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 7px; }
 .chart .title .key { width: 14px; height: 2px; border-radius: 2px; }
 .chart .title .plan-key { display: inline-flex; align-items: center; gap: 7px; margin-left: 10px; }
 .chart .title .plan-key .key { background: var(--text-secondary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text-secondary) 14%, transparent); }
-.chart canvas { width: 100%; display: block; cursor: crosshair; }
+.charts .head-ctl { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.charts .head-ctl button small { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.zoom-hint::after { content: 'Drag across a chart to zoom'; font-size: 12px; color: var(--text-muted); }
+@media (pointer: coarse) { .zoom-hint::after { content: 'Pinch a chart to zoom'; } }
+@media (max-width: 420px) { .zoom-hint { display: none; } }
+/* uPlot: crosshair and zoom selection in the dashboard's colours */
+.chart .plot { width: 100%; }
+.chart .uplot { font-family: inherit; width: 100%; }
+.chart .u-over { cursor: crosshair; touch-action: pan-y; }
+.chart .u-cursor-x { border-right: 1px solid var(--text-secondary); }
+.chart .u-select { background: color-mix(in srgb, var(--text-secondary) 14%, transparent); }
+.chart .plot:not(.zoomable) .u-select { display: none; }
 .tip { position: absolute; pointer-events: none; background: var(--surface-2); border: 1px solid var(--border);
        border-radius: 8px; padding: 8px 10px; font-size: 13px; z-index: 5;
        font-variant-numeric: tabular-nums; box-shadow: 0 6px 20px rgba(0,0,0,.4); min-width: 150px; }

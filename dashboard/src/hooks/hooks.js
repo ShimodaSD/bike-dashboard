@@ -30,18 +30,3 @@ export function useArmed(resetKey) {
   };
   return [armed, press];
 }
-
-// Measured content width of an element, kept up to date by a ResizeObserver attached through
-// a ref callback (no effect). Returns [ref, width]; `ref` also fills `nodeRef` when given.
-export function useWidth(nodeRef) {
-  const [w, setW] = useState(0);
-  const ro = useRef(null);
-  const ref = useCallback(node => {
-    if (ro.current) { ro.current.disconnect(); ro.current = null; }
-    if (nodeRef) nodeRef.current = node;
-    if (!node) return;
-    ro.current = new ResizeObserver(([e]) => setW(Math.round(e.contentRect.width)));
-    ro.current.observe(node);
-  }, [nodeRef]);
-  return [ref, w];
-}
