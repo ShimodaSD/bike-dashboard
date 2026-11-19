@@ -8,8 +8,10 @@ smart trainer) and watch a live training dashboard in your browser.
 ```
 Start X2Max.command   double-click to start (macOS)
 logger/               thinkrider_logger.py: Bluetooth, recording, .FIT, web server
+                      trainer_control.py: climb simulation / ERG over FTMS (off by default)
 dashboard/            dashboard.html (built, served by the logger) and its React source in src/
   src/workout/        workout files: reading .zwo / .erg / .mrc, step targets, off-target beep
+  src/control/        Trainer control band: grade slider, ERG, workout grades
 tests/                self-check for the logger
 workouts/             test workouts: power, heart rate, cadence and speed targets (load them in Settings)
 rides/                your recordings, one folder per run (not committed)
@@ -41,8 +43,26 @@ Your picks are saved in `config/devices.json`, and the logger connects to
 them by itself on the next start. On the very first start (nothing picked yet) it takes
 the first ThinkRider / FTMS trainer and the first heart-rate broadcast it finds, and the
 panel opens so you can change that. Disconnecting the trainer during a ride pauses the
-ride timer (the panel asks you to click twice). The logger only listens: it never writes
-to the trainer.
+ride timer (the panel asks you to click twice). The logger only listens unless you turn on
+**Trainer control** (below).
+
+## Simulate climbs (Trainer control)
+
+The **Trainer control** switch under the ride strip lets the logger drive the trainer over
+FTMS, the same standard control Zwift uses. It is off every time the logger starts.
+
+- **Climb**: pick a grade with the quick buttons (0, 3, 6, 10 %), the slider (−5 to 15 %),
+  − / + or the <kbd>−</kbd> <kbd>+</kbd> keys. The trainer gets harder or easier like a real hill.
+- **ERG**: the trainer holds a target power whatever your cadence.
+- **Workouts**: a `.zwo` step can carry `Grade="6"` (or `OnGrade` / `OffGrade` on `IntervalsT`);
+  with control on, each step sets the grade when it starts. In ERG mode the step's power target
+  is sent instead. Try `workouts/climb-repeats.zwo`.
+- **Safety**: the grade goes back to 0 % on Finish, when the trainer disconnects and when the
+  logger stops (control is then handed back). If Zwift or the ThinkRider app takes the trainer,
+  control turns itself off and the dashboard says so.
+
+The grade is saved in `session_1hz.csv` (`grade_pct`). `--demo` simulates it too: speed drops on a
+climb and ERG holds the power.
 
 Command line, if you prefer:
 

@@ -1,0 +1,142 @@
+// Trainer control: simulate a climb (grade) or hold a power (ERG) on the X2Max over FTMS.
+// Off by default. The logger puts the grade back to 0 % on Finish, when the trainer drops and
+// when it stops, and turns control off if another app (Zwift…) takes the trainer.
+//   POST /control?on=1|0      turn control on / off
+//   POST /control/grade?pct=  simulate this grade (Climb mode)
+//   POST /control/power?w=    hold this power (ERG mode)
+// status.control = { enabled, state, mode: 'sim'|'erg', grade, power_w, msg, supports, power_range }
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+
+const post = path => fetch(path, { method: 'POST' }).catch(() => {});
+export const GRADE_MIN = -5, GRADE_MAX = 15, GRADE_STEP = 0.5;
+const QUICK = [0, 3, 6, 10];
+const ERG_PCT = [0.55, 0.75, 0.9, 1.05];       // quick ERG targets, fraction of FTP
+
+export const sendGrade = pct => post(`/control/grade?pct=${pct}`);
+export const sendPower = w => post(`/control/power?w=${Math.round(w)}`);
+export const fmtGrade = g => `${g > 0 ? '' : g < 0 ? '−' : ''}${Math.abs(g).toFixed(1)}`;
+
+const STATE_TXT = {
+  off: 'Off',
+  connecting: 'Taking control…',
+  on: 'On',
+  waiting: 'Waiting for the trainer',
+  lost: 'Off · control lost',
+  error: 'Off · error',
+  unsupported: 'Not available',
+};
+
+// Sends at most every `gap` ms while a slider is dragged, and always the last value.
+function useThrottled(fn, gap = 150) {
+  const last = useRef(0), timer = useRef(null), pending = useRef(null);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return useCallback(v => {
+    pending.current = v;
+    const wait = gap - (Date.now() - last.current);
+    if (wait <= 0) { last.current = Date.now(); fn(v); return; }
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => { last.current = Date.now(); fn(pending.current); }, wait);
+  }, [fn, gap]);
+}
+
+// One number shown big, with − / + beside it, quick picks and a slider underneath.
+function Dial({ label, value, unit, fmt, min, max, step, quick, quickLabel, onSet }) {
+  const [draft, setDraft] = useState(null);       // slider position while dragging
+  const send = useThrottled(onSet);
+  useEffect(() => { if (draft !== null && Math.abs(draft - value) < step / 2) setDraft(null); }, [value]); // eslint-disable-line
+  useEffect(() => {                               // the logger may round or refuse: show its value again
+    if (draft === null) return;
+    const t = setTimeout(() => setDraft(null), 1500);
+    return () => clearTimeout(t);
+  }, [draft]);
+  const v = draft ?? value;
+  const nudge = d => { const n = Math.min(max, Math.max(min, v + d)); setDraft(n); onSet(n); };
+  return (
+    <div className="dial">
+      <div className="dial-now">
+        <button className="nudge" onClick={() => nudge(-step)} disabled={v <= min} aria-label={`${label} down`}>−</button>
+        <output className="dial-value" aria-live="polite" aria-label={label}>{fmt(v)}<span className="unit">{unit}</span></output>
+        <button className="nudge" onClick={() => nudge(step)} disabled={v >= max} aria-label={`${label} up`}>+</button>
+      </div>
+      <div className="dial-quick" role="group" aria-label={`Quick ${label.toLowerCase()}`}>
+        {quick.map(q => <button key={q} className={Math.abs(q - v) < step / 2 ? 'on' : ''}
+                                onClick={() => { setDraft(q); onSet(q); }}>{quickLabel(q)}</button>)}
+      </div>
+      <input type="range" min={min} max={max} step={step} value={v} aria-label={label}
+             onChange={e => { const n = +e.target.value; setDraft(n); send(n); }} />
+    </div>
+  );
+}
+
+export function ClimbBand({ ctl, ftp, follow }) {
+  const on = ctl.enabled;
+  const live = on && ctl.state === 'on';
+  const erg = ctl.mode === 'erg';
+  const [lo, hi] = ctl.power_range || [50, 1000];
+  const ergQuick = ERG_PCT.map(p => Math.min(hi, Math.max(lo, Math.round((ftp * p) / 5) * 5)));
+  const canErg = !ctl.supports || ctl.supports.erg !== false;
+  const stateCls = live ? 'ok' : ['lost', 'error', 'unsupported'].includes(ctl.state) ? 'bad' : on ? 'wait' : '';
+  return (
+    <section className={'climb' + (on ? ' on' : '')} aria-label="Trainer control">
+      <div className="climb-head">
+        <button role="switch" aria-checked={on} className={'switch' + (on ? ' on' : '')}
+                disabled={ctl.state === 'unsupported'}
+                onClick={() => post(`/control?on=${on ? 0 : 1}`)}>
+          <span className="knob" aria-hidden="true" />Trainer control
+        </button>
+        <span className={'climb-state ' + stateCls}>{STATE_TXT[ctl.state] || ctl.state}</span>
+        {on && <div className="seg" role="group" aria-label="Control mode">
+          <button className={!erg ? 'on' : ''} aria-pressed={!erg} onClick={() => sendGrade(ctl.grade || 0)}>Climb</button>
+          <button className={erg ? 'on' : ''} aria-pressed={erg} disabled={!canErg}
+                  title={canErg ? 'The trainer holds a power, whatever your cadence' : 'This trainer has no ERG mode'}
+                  onClick={() => sendPower(ctl.power_w || Math.round(ftp * 0.75 / 5) * 5)}>ERG</button>
+        </div>}
+        {!on && !ctl.msg && <span className="climb-help">Simulate climbs: the trainer gets harder or easier, like a hill in Zwift.</span>}
+        {ctl.msg && <span className="climb-msg" role="alert">{ctl.msg}</span>}
+      </div>
+      {on && (erg
+        ? <Dial label="Target power" value={ctl.power_w} unit="W" fmt={w => Math.round(w)} min={lo} max={Math.min(hi, 600)}
+                step={5} quick={ergQuick} quickLabel={w => `${w} W`} onSet={sendPower} />
+        : <Dial label="Grade" value={ctl.grade} unit="%" fmt={fmtGrade} min={GRADE_MIN} max={GRADE_MAX}
+                step={GRADE_STEP} quick={QUICK} quickLabel={g => `${g} %`} onSet={sendGrade} />)}
+      {on && <p className="climb-foot">
+        {follow ? <>{follow} </> : null}
+        Back to 0 % when you finish or the trainer disconnects.<span className="keys"> Keys: <kbd>−</kbd> <kbd>+</kbd></span></p>}
+    </section>
+  );
+}
+
+// Workout steps with a grade (Grade="6" in a .zwo) set the trainer when the step starts, and in
+// ERG mode steps with a power target set the power. Changing it by hand holds until the next step.
+export function useWorkoutControl({ ctl, at, recording }) {
+  const sent = useRef(null);
+  useEffect(() => {
+    if (!recording || !ctl || !ctl.enabled || ctl.state !== 'on' || !at) { sent.current = null; return; }
+    let key = null, go = null;
+    if (ctl.mode === 'erg' && at.target != null) {
+      const w = Math.round(at.target / 5) * 5;          // ramps: a new target every 5 W
+      key = `${at.i}:p${w}`; go = () => sendPower(w);
+    } else if (at.s.grade != null) {
+      key = `${at.i}:g${at.s.grade}`; go = () => sendGrade(at.s.grade);
+    }
+    if (key && key !== sent.current) { sent.current = key; go(); }
+  }, [recording, ctl && ctl.enabled, ctl && ctl.state, ctl && ctl.mode, at && at.i, at && at.target, at && at.s.grade]); // eslint-disable-line
+}
+
+// + / − keys: grade ±0.5 % (or ERG ±5 W) while control is on.
+export function useControlKeys(ctlRef) {
+  useEffect(() => {
+    const k = e => {
+      if (e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+      const c = ctlRef.current;
+      if (!c || !c.enabled || c.state !== 'on') return;
+      const d = e.key === '+' || e.key === '=' ? 1 : e.key === '-' || e.key === '_' ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      if (c.mode === 'erg') sendPower(c.power_w + d * 5);
+      else sendGrade(Math.min(GRADE_MAX, Math.max(GRADE_MIN, c.grade + d * GRADE_STEP)));
+    };
+    document.addEventListener('keydown', k);
+    return () => document.removeEventListener('keydown', k);
+  }, [ctlRef]);
+}

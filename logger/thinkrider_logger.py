@@ -15,7 +15,9 @@ What it does
      Heart rate can come from a 2nd BLE device (Garmin watch broadcasting HR).
   7. Serves a live dashboard at http://localhost:8000  (power, cadence, speed,
      HR, zones, NP/TSS, laps, live charts). Reconnects automatically if the
-     trainer drops. Passive: never writes to the trainer.
+     trainer drops.
+  8. Optional trainer control (off by default, a toggle on the dashboard):
+     simulate a climb (grade) or hold a power (ERG) over FTMS. See trainer_control.py.
 
 Requirements
   uv (https://docs.astral.sh/uv/) - `uv run` installs bleak from pyproject.toml.
@@ -69,6 +71,8 @@ try:
     from bleak import BleakClient, BleakScanner
 except ImportError:                       # --demo works without bleak
     BleakClient = BleakScanner = None
+
+from trainer_control import TrainerControl, DemoControl, CONTROL_POINT  # noqa: E402 (logger/)
 
 
 # --------------------------------------------------------------------------
@@ -328,7 +332,7 @@ DECODED_FIELDS = [
 # Live state shared between Bluetooth, the 1 Hz timeline and the dashboard
 # --------------------------------------------------------------------------
 SESSION_FIELDS = ["t", "timestamp_utc", "lap", "power_w", "cadence_rpm",
-                  "speed_kmh", "heart_rate_bpm", "distance_m", "energy_kj"]
+                  "speed_kmh", "heart_rate_bpm", "distance_m", "energy_kj", "grade_pct"]
 
 
 class Live:
@@ -355,6 +359,7 @@ class Live:
         self._live_pending = False     # a "live" push is already scheduled
         self.devices = None            # Devices: trainer / heart-rate choice (device panel)
         self.quit = None               # stops the logger (Stop button, closed launcher window)
+        self.control = None            # TrainerControl / DemoControl: climb simulation, ERG
 
     # -- ride control (Start / Finish buttons) ------------------------------
     @property
@@ -380,6 +385,8 @@ class Live:
 
     def finish_ride(self):
         """Stop recording and save the .FIT. Returns its path (None if empty)."""
+        if self.control:
+            self.control.to_flat("ride finished")
         if not self.recording:
             return self.fit_path
         self.sess_f.close()
@@ -512,6 +519,7 @@ class Live:
             "heart_rate_bpm": None if hr is None else round(hr),
             "distance_m": round(self.distance_m, 1),
             "energy_kj": round(self.energy_kj, 2),
+            "grade_pct": self.control.current_grade() if self.control else None,
         }
         self.history.append(s)
         self.sess_w.writerow(s)
@@ -627,6 +635,20 @@ async def handle_http(reader, writer, live: Live):
             elif role in ROLES and act == "off":
                 asyncio.ensure_future(devs.set(role, {**devs.choice[role], "mode": "off"}))
             else:
+                body, code = b"bad request", "400 Bad Request"
+        elif path.startswith("/control") and method == "POST" and live.control:
+            ctl, act = live.control, path[len("/control"):]
+            body, ctype, code = b"ok", "text/plain", "200 OK"
+            try:
+                if act == "" and params.get("on") in ("0", "1"):
+                    ctl.set_enabled(params["on"] == "1")
+                elif act == "/grade":
+                    ctl.set_grade(float(params["pct"]))
+                elif act == "/power":
+                    ctl.set_power(float(params["w"]))
+                else:
+                    raise ValueError
+            except (KeyError, ValueError, OverflowError):
                 body, code = b"bad request", "400 Bad Request"
         elif path == "/quit" and method == "POST" and live.quit:
             print("Stop pressed on the dashboard")
@@ -1199,6 +1221,11 @@ async def trainer_loop(args, live: Live, devices: Devices, raw_w, dec_w, t0):
                     raw_w.writerow([ts, el, svc_uuid, ch.uuid, cname, ch.handle,
                                     len(data), data.hex()])
                     live.packets += 1
+                    if live.control and data:
+                        if ch.uuid.lower() == CONTROL_POINT:
+                            live.control.on_indication(bytes(data))
+                        elif ch.uuid.lower() == u16(0x2ADA):
+                            live.control.on_status(data[0])
                     if decoder:
                         try:
                             row = decoder(bytes(data))
@@ -1220,6 +1247,8 @@ async def trainer_loop(args, live: Live, devices: Devices, raw_w, dec_w, t0):
                             print(f"  subscribe failed {uuid_name(ch.uuid)}: {e}")
             print(f"Subscribed to {n} characteristics. Riding data is live.")
             live.set_status(state="connected", connected=True, device=name)
+            if live.control:
+                await live.control.attach(client)
             await gone.wait()
             print("Trainer disconnected - reconnecting ...")
         except asyncio.CancelledError:
@@ -1228,6 +1257,8 @@ async def trainer_loop(args, live: Live, devices: Devices, raw_w, dec_w, t0):
         except Exception as e:
             print(f"Bluetooth error: {e} - retrying ...")
         finally:
+            if live.control:
+                live.control.detach()
             if client is not None:
                 try:
                     await client.disconnect()
@@ -1321,19 +1352,47 @@ async def demo_trainer(live: Live, devices: Devices):
     live.trainer_address = dev["address"]
     devices.remember("trainer", dev["address"], dev["name"])
     live.set_status(state="demo", connected=True, device=dev["name"])
+    ctl = live.control
+    if ctl:
+        ctl.attach()
     t = 0
-    while True:
-        if t < 300:
-            target = 110 + 90 * t / 300                    # warm-up ramp
+    try:
+        while True:
+            if t < 300:
+                target = 110 + 90 * t / 300                # warm-up ramp
+            else:
+                c = (t - 300) % 420
+                target = 285 if c < 240 else 155           # 4 min on / 3 min easy
+            grade = (ctl.current_grade() if ctl else None) or 0
+            erg = ctl and ctl.enabled and ctl.state == "on" and ctl.mode == "erg"
+            if erg:
+                target = ctl.power_w                       # ERG: the trainer holds the power
+            else:
+                target = max(60, target + 12 * grade)     # a climb makes the rider push harder
+            p = max(0.0, random.gauss(target, 5 if erg else 14))
+            cad = random.gauss((93 if target > 250 else 86) - 1.5 * max(grade, 0), 2)
+            live.update({"power_w": p, "cadence_rpm": cad, "speed_kmh": demo_speed(p, grade)})
+            t += 0.25
+            await asyncio.sleep(0.25)                      # trainers send ~4 readings a second
+    finally:
+        if ctl:
+            ctl.detach()
+
+
+def demo_speed(power_w, grade_pct, mass_kg=85.0):
+    """Road speed (km/h) for a power on a grade: air drag + rolling resistance + climbing.
+    Solves 0.32 v^3 + m g (crr + grade) v = P for v (m/s) by bisection."""
+    if power_w <= 0 and grade_pct >= 0:
+        return 0.0
+    k = mass_kg * 9.81 * (0.004 + grade_pct / 100)
+    lo, hi = 0.0, 40.0
+    for _ in range(40):
+        v = (lo + hi) / 2
+        if 0.32 * v ** 3 + k * v < power_w:
+            lo = v
         else:
-            c = (t - 300) % 420
-            target = 285 if c < 240 else 155               # 4 min on / 3 min easy
-        p = max(0.0, random.gauss(target, 14))
-        cad = random.gauss(93 if target > 250 else 86, 2)
-        spd = 3.6 * (p / 0.32) ** (1 / 3) if p > 0 else 0  # rough flat-road speed
-        live.update({"power_w": p, "cadence_rpm": cad, "speed_kmh": spd})
-        t += 0.25
-        await asyncio.sleep(0.25)                          # trainers send ~4 readings a second
+            hi = v
+    return 3.6 * lo
 
 
 async def demo_hr(live: Live, devices: Devices):
@@ -1360,6 +1419,7 @@ async def main_async(args):
     live = Live(args.out)
     live.port = args.port
     live.devices = devices = Devices(live, args, demo=args.demo)
+    live.control = DemoControl(live) if args.demo else TrainerControl(live)
     t0 = time.monotonic()
 
     # Stop button on the dashboard, closing the launcher's Terminal window (SIGHUP) or
@@ -1417,6 +1477,7 @@ async def main_async(args):
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await live.control.close()        # trainer back to 0 %, control released
         await devices.close()
         server.close()
         fit = live.finish_ride()          # Ctrl+C mid-ride still saves the .FIT

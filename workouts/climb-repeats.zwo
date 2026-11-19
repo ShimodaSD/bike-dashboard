@@ -1,0 +1,13 @@
+<workout_file>
+    <author>X2Max dashboard</author>
+    <name>Climb test · Hill repeats</name>
+    <description>31 min. Turn on Trainer control first: each step sets the grade on the trainer (Grade is an X2Max-dashboard extra; Zwift ignores it). Ride by feel, shift to keep your cadence.</description>
+    <sportType>bike</sportType>
+    <workout>
+        <FreeRide Duration="300" Grade="0"/>
+        <FreeRide Duration="120" Grade="2"/>
+        <IntervalsT Repeat="4" OnDuration="180" OffDuration="120" OnGrade="6" OffGrade="0" Cadence="80" CadenceResting="90"/>
+        <FreeRide Duration="60" Grade="10"/>
+        <FreeRide Duration="180" Grade="0"/>
+    </workout>
+</workout_file>

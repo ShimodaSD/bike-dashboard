@@ -16,7 +16,7 @@ Record every ride on the X2Max from macOS, where the ThinkRider app can't read t
 
 ## Positioning
 
-A small local tool instead of a heavy training app: it works on macOS where ThinkRider doesn't, and it stays light on battery compared to apps like Zwift. It works fully offline: no account, no internet needed to ride, record or view the dashboard. Sending a ride to Strava is a manual upload of the .FIT, and it never writes to the trainer.
+A small local tool instead of a heavy training app: it works on macOS where ThinkRider doesn't, and it stays light on battery compared to apps like Zwift. It works fully offline: no account, no internet needed to ride, record or view the dashboard. Sending a ride to Strava is a manual upload of the .FIT. It only controls the trainer (climb grade or ERG) when the rider turns Trainer control on.
 
 ## Operating Context
 

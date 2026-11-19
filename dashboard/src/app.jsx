@@ -4,12 +4,14 @@
 //   POST /lap     start a new lap
 //   POST /start, /finish   begin / end a recorded ride
 //   POST /devices/scan, /devices/use|search|off?role=trainer|hr   device panel
+//   POST /control?on=1|0, /control/grade?pct=, /control/power?w=   trainer control (control/climb.jsx)
 //   POST /clear   empty the dashboard (files on disk stay)
 //   POST /quit    stop the logger
 //   GET  /ride.fit  the finished ride (or the ride so far)
 import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-import { WorkoutBand, WorkoutSettings, plannedLine, powerTol, CAD_TOL, HR_TOL, SPEED_TOL } from './workout/workout.jsx';
+import { WorkoutBand, WorkoutSettings, plannedLine, powerTol, workoutAt, CAD_TOL, HR_TOL, SPEED_TOL } from './workout/workout.jsx';
+import { ClimbBand, useWorkoutControl, useControlKeys, fmtGrade } from './control/climb.jsx';
 
 // ------------------------------------------------------------------ constants & helpers
 const ZONES = [
@@ -22,7 +24,7 @@ const ZONES = [
   { n: 'Z7', name: 'Neuromuscular', lo: 1.50, hi: Infinity },
 ];
 const CSV_COLS = ['t', 'timestamp_utc', 'lap', 'power_w', 'cadence_rpm', 'speed_kmh',
-                  'heart_rate_bpm', 'distance_m', 'energy_kj'];
+                  'heart_rate_bpm', 'distance_m', 'energy_kj', 'grade_pct'];
 
 const nz = v => v !== null && v !== undefined;
 const r0 = v => (nz(v) ? Math.round(v) : '–');
@@ -308,7 +310,8 @@ function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, li
         <span className="flabel">Tips</span>
         <p className="help">Garmin watch heart rate: turn on <b>Broadcast Heart Rate</b> on the watch.
           Close Zwift and the ThinkRider app first: the trainer and the watch accept one connection at a time.
-          <span className="keys"> Keys: <Kbd k="S" /> start, <Kbd k="L" /> lap, <Kbd k="F" /> twice to finish.</span></p>
+          <span className="keys"> Keys: <Kbd k="S" /> start, <Kbd k="L" /> lap, <Kbd k="F" /> twice to finish,
+          <Kbd k="−" /> <Kbd k="+" /> grade (Trainer control on).</span></p>
       </div>
     </section>
   );
@@ -735,6 +738,7 @@ function Tooltip({ s, pos, ftp, boxRef }) {
       <Row col="var(--cadence)" k="Cadence" v={`${s.cadence_rpm} rpm`} />
       <Row col="var(--hr)" k="Heart rate" v={nz(s.heart_rate_bpm) ? `${s.heart_rate_bpm} bpm` : '–'} />
       <Row col="var(--speed)" k="Speed" v={nz(s.speed_kmh) ? `${s.speed_kmh.toFixed(1)} km/h` : '–'} />
+      {nz(s.grade_pct) && <Row col="var(--text-secondary)" k="Grade" v={`${fmtGrade(s.grade_pct)} %`} />}
     </div>
   );
 }
@@ -937,6 +941,16 @@ function App() {
 
   useEffect(() => { document.documentElement.dataset.ride = mode; }, [mode]);
 
+  // trainer control: climb / ERG, workout steps drive it while recording
+  const ctl = status.control;
+  const ctlRef = useRef(ctl); ctlRef.current = ctl;
+  useControlKeys(ctlRef);
+  const woAt = wo && mode === 'recording' ? workoutAt(wo, hist.length, ftp) : null;
+  useWorkoutControl({ ctl, at: woAt, recording: mode === 'recording' });
+  const woDrives = wo && wo.segs.some(s => s.grade != null) ? 'Workout steps with a grade set it when they start.'
+                 : wo && ctl && ctl.mode === 'erg' ? 'The workout sets the power at each step.' : null;
+  const showCtl = ctl && (status.connected || ctl.enabled || ctl.msg);
+
   return (
     <div className="wrap">
       <Header status={status} ride={ride} act={act} panel={panel} toggle={toggle} />
@@ -949,6 +963,7 @@ function App() {
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
       <RideStrip ride={ride} seconds={hist.length} startArmed={startArmed} lapFlash={lapFlash}
                  sent={sent || { to: [] }} onDownload={markSent} />
+      {showCtl && <ClimbBand ctl={ctl} ftp={ftp} follow={woDrives} />}
       {wo && mode !== 'finished' && (() => {
         const fresh = now && Date.now() - now.at < FRESH_MS;
         return <WorkoutBand wo={wo} t={hist.length} mode={mode} ftp={ftp} sound={woSound} onRemove={() => setWo(null)}

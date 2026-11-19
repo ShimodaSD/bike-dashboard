@@ -1,9 +1,10 @@
 // Structured workouts: load a .zwo (Zwift), .erg or .mrc file, follow its steps during a
 // recorded ride, and beep when power, cadence or heart rate is off target, at most once every 15 s.
-// The trainer is not controlled: the rider holds the target.
+// With Trainer control off the rider holds the target. With it on, a step's grade sets the
+// trainer's climb, and in ERG mode a step's power target sets the trainer (control/climb.jsx).
 // Heart-rate targets are an extra .zwo attribute (Zwift ignores it): HeartRate="140" (bpm) on
 // a step, OnHeartRate / OffHeartRate on IntervalsT. Speed targets the same way: Speed="30" (km/h),
-// OnSpeed / OffSpeed. See workouts/ for examples.
+// OnSpeed / OffSpeed. Grade targets too: Grade="6" (%), OnGrade / OffGrade. See workouts/ for examples.
 import React, { useEffect, useRef } from 'react';
 
 const BEEP_GAP_MS = 15000;     // at most one beep every 15 s
@@ -11,7 +12,7 @@ const GRACE_S = 8;             // no beep in the first seconds of a step (time t
 const HR_GRACE_S = 30;         // heart rate needs longer to follow a new effort
 
 // Segment: { dur (s), lo, hi (power target at start / end), unit: 'ftp' (fraction) | 'w',
-//            cad (rpm), hr (bpm), spd (km/h), name }
+//            cad (rpm), hr (bpm), spd (km/h), grade (%), name }
 export function parseWorkout(text, fileName) {
   const ext = (fileName.split('.').pop() || '').toLowerCase();
   const segs = ext === 'zwo' ? parseZwo(text) : parseErg(text, ext === 'erg' ? 'w' : 'ftp');
@@ -28,23 +29,23 @@ function parseZwo(text) {
   const num = (el, a) => { const v = parseFloat(el.getAttribute(a)); return Number.isFinite(v) ? v : null; };
   const segs = [];
   for (const el of w.children) {
-    const tag = el.tagName.toLowerCase(), dur = num(el, 'Duration') || 0, cad = num(el, 'Cadence'), hr = num(el, 'HeartRate'), spd = num(el, 'Speed');
+    const tag = el.tagName.toLowerCase(), dur = num(el, 'Duration') || 0, cad = num(el, 'Cadence'), hr = num(el, 'HeartRate'), spd = num(el, 'Speed'), grade = num(el, 'Grade');
     if (tag === 'intervalst') {
       const on = num(el, 'OnDuration') || 0, off = num(el, 'OffDuration') || 0, n = num(el, 'Repeat') || 1;
       const onP = num(el, 'OnPower') ?? num(el, 'PowerOnHigh') ?? num(el, 'PowerOnLow');
       const offP = num(el, 'OffPower') ?? num(el, 'PowerOffHigh') ?? num(el, 'PowerOffLow');
       for (let i = 0; i < n; i++) {
-        if (on) segs.push({ dur: on, lo: onP, hi: onP, unit: 'ftp', cad, hr: num(el, 'OnHeartRate'), spd: num(el, 'OnSpeed'), name: `Interval ${i + 1}/${n}` });
-        if (off) segs.push({ dur: off, lo: offP, hi: offP, unit: 'ftp', cad: num(el, 'CadenceResting'), hr: num(el, 'OffHeartRate'), spd: num(el, 'OffSpeed'), name: 'Recovery' });
+        if (on) segs.push({ dur: on, lo: onP, hi: onP, unit: 'ftp', cad, hr: num(el, 'OnHeartRate'), spd: num(el, 'OnSpeed'), grade: num(el, 'OnGrade'), name: `Interval ${i + 1}/${n}` });
+        if (off) segs.push({ dur: off, lo: offP, hi: offP, unit: 'ftp', cad: num(el, 'CadenceResting'), hr: num(el, 'OffHeartRate'), spd: num(el, 'OffSpeed'), grade: num(el, 'OffGrade'), name: 'Recovery' });
       }
     } else if (!dur) {
       continue;                                   // text events etc.
     } else if (tag === 'freeride' || tag === 'maxeffort') {
-      segs.push({ dur, lo: null, hi: null, unit: 'ftp', cad, hr, spd, name: tag === 'maxeffort' ? 'Max effort' : 'Free ride' });
+      segs.push({ dur, lo: null, hi: null, unit: 'ftp', cad, hr, spd, grade, name: tag === 'maxeffort' ? 'Max effort' : 'Free ride' });
     } else {
       const lo = num(el, 'PowerLow') ?? num(el, 'Power'), hi = num(el, 'PowerHigh') ?? lo;
       const name = { warmup: 'Warm-up', cooldown: 'Cool-down', ramp: 'Ramp' }[tag] || 'Steady';
-      segs.push({ dur, lo, hi, unit: 'ftp', cad, hr, spd, name });
+      segs.push({ dur, lo, hi, unit: 'ftp', cad, hr, spd, grade, name });
     }
   }
   return segs;
@@ -165,6 +166,7 @@ function segText(s, ftp) {
     const lo = Math.round(watts(s.lo, s.unit, ftp)), hi = Math.round(watts(s.hi, s.unit, ftp));
     parts.push(`${lo === hi ? lo : `${lo}→${hi}`} W`);
   }
+  if (s.grade != null) parts.push(`${s.grade} % grade`);
   if (s.spd) parts.push(`${s.spd} km/h`);
   if (s.hr) parts.push(`${s.hr} bpm`);
   if (s.cad) parts.push(`${s.cad} rpm`);
@@ -180,10 +182,12 @@ function offDetail(off, at, power, cadence, hr, speed) {
 }
 const signed = n => `${n > 0 ? '+' : ''}${n}`;
 
-// Profile of the whole workout: power if the file has power targets, else heart rate, else cadence.
+// Profile of the whole workout: power if the file has power targets, else grade (a climb profile),
+// else speed, heart rate, cadence.
 function profileOf(wo, ftp) {
-  const has = k => wo.segs.some(s => (k === 'p' ? s.lo != null : s[k]));
-  const k = has('p') ? 'p' : has('spd') ? 'spd' : has('hr') ? 'hr' : 'cad';
+  const has = k => wo.segs.some(s => (k === 'p' ? s.lo != null : k === 'grade' ? s.grade != null : s[k]));
+  const k = has('p') ? 'p' : has('grade') ? 'grade' : has('spd') ? 'spd' : has('hr') ? 'hr' : 'cad';
+  if (k === 'grade') return { v: s => (s.grade == null ? 0.5 : Math.max(s.grade, 0) + 1), free: s => s.grade == null };
   const v = (s, end) => (k === 'p' ? watts((end ? s.hi : s.lo) ?? 0.5, s.unit, ftp) : s[k] || 0);
   return { v, free: s => (k === 'p' ? s.lo == null : !s[k]) };
 }
@@ -193,12 +197,13 @@ function targetText(at) {
   const ftp = at.target != null && at.s.unit === 'ftp' && at.s.lo ? at.target / at.s.lo : null;
   const all = [
     at.target != null && [`${Math.round(at.target)} W`, ftp && at.s.lo === at.s.hi ? ` ${Math.round(at.s.lo * 100)}% FTP` : ''],
+    at.s.grade != null && [`${at.s.grade} %`, ' grade'],
     at.s.spd && [`${at.s.spd} km/h`, ''],
     at.s.hr && [`${at.s.hr} bpm`, ''],
     at.s.cad && [`${at.s.cad} rpm`, ''],
   ].filter(Boolean);
   if (!all.length) return 'No target';
-  return <>{all[0][0]}<small>{all[0][1]}</small>{all.slice(1).map(([v]) => <small key={v}> · {v}</small>)}</>;
+  return <>{all[0][0]}<small>{all[0][1]}</small>{all.slice(1).map(([v, x]) => <small key={v}> · {v}{x}</small>)}</>;
 }
 
 // Workout band: current step, target, time left, on/off target, and a small profile of the whole workout.
@@ -296,6 +301,6 @@ export function WorkoutSettings({ wo, setWo, sound, setSound }) {
     </div>
     <p className={'help' + (err ? ' err' : '')}>{err || (wo
       ? <><b>{wo.name}</b> · {wo.segs.length} steps · {fmt(wo.total)}. Starts with the ride.</>
-      : 'Zwift .zwo, .erg or .mrc file. Beeps at most once every 15 s when power, cadence, heart rate or speed is off target.')}</p>
+      : <>Zwift .zwo, .erg or .mrc file. Beeps at most once every 15 s when power, cadence, heart rate or speed is off target. Steps with a grade climb on their own when <b>Trainer control</b> is on.</>)}</p>
   </>;
 }
