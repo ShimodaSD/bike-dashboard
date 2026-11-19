@@ -1,15 +1,17 @@
 // Builds a single self-contained dashboard.html (React bundled inline, no internet needed).
-//   pnpm install && pnpm build
+//   pnpm install && pnpm build    (uPlot for the charts is bundled in too)
 import { build } from 'esbuild';
 import { readFileSync, writeFileSync } from 'node:fs';
 
 const r = await build({
-  entryPoints: ['src/app.jsx'], bundle: true, minify: true, write: false,
+  entryPoints: ['src/app.jsx'], bundle: true, minify: true, write: false, outdir: 'out',
   format: 'iife', target: 'es2019', jsx: 'automatic',
   define: { 'process.env.NODE_ENV': '"production"' },
 });
-const js = r.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
-const css = readFileSync('src/style.css', 'utf8');
+const out = ext => r.outputFiles.find(f => f.path.endsWith(ext))?.text || '';
+const js = out('.js').replace(/<\/script/gi, '<\\/script');
+// CSS imported by the code (uPlot's), then the dashboard's own so its rules win
+const css = out('.css') + readFileSync('src/style.css', 'utf8');
 // Sprint b logo as the tab icon, inlined so the page stays a single offline file.
 const icon = 'data:image/svg+xml,' + encodeURIComponent(readFileSync('src/brand/logo.svg', 'utf8').trim());
 writeFileSync("dashboard.html", `<!DOCTYPE html>

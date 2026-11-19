@@ -11,39 +11,24 @@
 //
 // State comes from two external stores read with useSyncExternalStore: the logger's live feed
 // (hooks/feed.js) and settings in localStorage (hooks/stored.js). Everything else is derived while
-// rendering. Effects are kept for real outside systems only: drawing the canvases, document key
+// rendering. Effects are kept for real outside systems only: feeding the uPlot charts, document key
 // and focus handling, the device scan while that panel is open, and the trainer / audio.
 import React, { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
-import { WorkoutBand, WorkoutSettings, plannedLine, powerTol, workoutAt, CAD_TOL, HR_TOL, SPEED_TOL } from './workout/workout.jsx';
-import { ClimbBand, useWorkoutControl, controlKey, fmtGrade } from './control/climb.jsx';
+import { WorkoutBand, WorkoutSettings, workoutAt } from './workout/workout.jsx';
+import { ClimbBand, useWorkoutControl, controlKey } from './control/climb.jsx';
 import { useLiveFeed } from './hooks/feed.js';
 import { useStored } from './hooks/stored.js';
-import { useArmed, useEvent, useWidth } from './hooks/hooks.js';
+import { useArmed, useEvent } from './hooks/hooks.js';
+import { ZONES, nz, fmtT, zoneOf } from './util/ride.js';
+import { Charts } from './charts/charts.jsx';
 
 // ------------------------------------------------------------------ constants & helpers
-const ZONES = [
-  { n: 'Z1', name: 'Recovery',   lo: 0,    hi: 0.55 },
-  { n: 'Z2', name: 'Endurance',  lo: 0.55, hi: 0.75 },
-  { n: 'Z3', name: 'Tempo',      lo: 0.75, hi: 0.90 },
-  { n: 'Z4', name: 'Threshold',  lo: 0.90, hi: 1.05 },
-  { n: 'Z5', name: 'VO2max',     lo: 1.05, hi: 1.20 },
-  { n: 'Z6', name: 'Anaerobic',  lo: 1.20, hi: 1.50 },
-  { n: 'Z7', name: 'Neuromuscular', lo: 1.50, hi: Infinity },
-];
+
 const CSV_COLS = ['t', 'timestamp_utc', 'lap', 'power_w', 'cadence_rpm', 'speed_kmh',
                   'heart_rate_bpm', 'distance_m', 'energy_kj', 'grade_pct'];
 
-const nz = v => v !== null && v !== undefined;
 const r0 = v => (nz(v) ? Math.round(v) : '–');
-const pad2 = n => String(n).padStart(2, '0');
-const fmtT = s => {
-  s = Math.max(0, Math.round(s));
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60;
-  return h ? `${h}:${pad2(m)}:${pad2(x)}` : `${m}:${pad2(x)}`;
-};
-const zoneOf = (p, ftp) => { const i = ZONES.findIndex(z => p / ftp < z.hi); return i < 0 ? 6 : i; };
-const cssVar = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
 // Summary over a slice of 1 Hz samples. `before` = the sample just before the slice (for distance/kJ deltas).
 function stats(a, ftp, before) {
@@ -520,208 +505,6 @@ const Stats = memo(function Stats({ hist, st, ftp, kg, more, setMore, mode }) {
       <button className="quiet more-btn" onClick={() => setMore(!more)} aria-expanded={more}>
         {more ? 'Fewer stats' : 'More stats'}</button>
     </section>
-  );
-});
-
-// ------------------------------------------------------------------ charts
-const CHARTS = [
-  { key: 'power_w', color: '--power', fill: true, min: 0, floorMax: 300, ftpRef: true, title: 'Power (W) · dashed line = FTP', name: 'Power', unit: 'W', h: 170 },
-  { key: 'cadence_rpm', color: '--cadence', min: 0, floorMax: 120, title: 'Cadence (rpm)', name: 'Cadence', unit: 'rpm', h: 100 },
-  { key: 'heart_rate_bpm', color: '--hr', autoMin: true, floorMax: 160, title: 'Heart rate (bpm)', name: 'Heart rate', unit: 'bpm', h: 100 },
-  { key: 'speed_kmh', color: '--speed', min: 0, floorMax: 40, title: 'Speed (km/h)', name: 'Speed', unit: 'km/h', h: 124, xaxis: true },
-];
-
-function niceStep(range, n) {
-  const raw = range / n, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
-  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
-}
-
-// Whole ride until it is longer than the window, then the last `win` seconds.
-// With a workout loaded the axis also shows what is coming: the whole plan, or the
-// next third of the window.
-function xRange(n, win, planEnd = 0) {
-  if (!planEnd) {
-    if (win && n > win) return [n - win, n - 1];
-    return [0, Math.max(n - 1, 59)];
-  }
-  if (!win) return [0, Math.max(n - 1, planEnd, 59)];
-  const x0 = Math.max(0, Math.round(n - (win * 2) / 3));
-  return [x0, x0 + win - 1];
-}
-
-// The canvas is drawn imperatively: the one effect here keeps its pixels in sync with the data.
-function Chart({ c, hist, laps, ftp, win, version, hover, setHover, workout }) {
-  const cv = useRef(null);
-  const [cvRef, W] = useWidth(cv), H = c.h;
-  const pad = { l: 40, r: 10, t: 8, b: c.xaxis ? 22 : 6 };
-  const [x0, x1] = xRange(hist.length, win, workout ? workout.total : 0);
-  const plan = useMemo(() => (workout ? plannedLine(workout, ftp, c.key) : []), [workout, ftp, c.key]);
-
-  useEffect(() => {
-    const el = cv.current; if (!el || !W) return;
-    const dpr = window.devicePixelRatio || 1;
-    el.width = Math.round(W * dpr); el.height = Math.round(H * dpr);
-    const g = el.getContext('2d');
-    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
-    const tok = { grid: cssVar('--grid'), muted: cssVar('--text-muted'), sec: cssVar('--text-secondary'),
-                  surf: cssVar('--surface-1'), col: cssVar(c.color) };
-
-    const data = hist.slice(Math.max(0, x0), x1 + 1);
-    const vals = data.map(s => s[c.key]).filter(nz);
-    let ymax = c.floorMax, ymin = c.min ?? 0, vmin = Infinity;
-    for (const v of vals) { if (v > ymax) ymax = v; if (v < vmin) vmin = v; }
-    if (c.ftpRef) ymax = Math.max(ymax, ftp * 1.15);
-    for (const p of plan) if (p.t1 > x0 && p.t0 <= x1) ymax = Math.max(ymax, p.a * 1.1, p.b * 1.1);
-    if (c.autoMin) ymin = vals.length ? Math.max(0, Math.floor((vmin - 10) / 20) * 20) : 60;
-    for (const p of plan) if (c.autoMin && p.t1 > x0 && p.t0 <= x1) ymin = Math.min(ymin, Math.max(0, Math.floor((Math.min(p.a, p.b) - 15) / 20) * 20));
-    const step = niceStep(ymax - ymin, 4); ymax = Math.ceil(ymax / step) * step;
-    const X = t => pad.l + ((t - x0) / Math.max(1, x1 - x0)) * (W - pad.l - pad.r);
-    const Y = v => pad.t + (1 - (v - ymin) / (ymax - ymin)) * (H - pad.t - pad.b);
-
-    // grid + y labels
-    g.font = '12px system-ui, sans-serif'; g.textBaseline = 'middle'; g.textAlign = 'right';
-    for (let v = ymin; v <= ymax + 1e-9; v += step) {
-      const y = Math.round(Y(v)) + 0.5;
-      g.strokeStyle = tok.grid; g.lineWidth = 1; g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke();
-      g.fillStyle = tok.muted; g.fillText(Math.round(v), pad.l - 6, Y(v));
-    }
-    // x labels (time)
-    if (c.xaxis) {
-      g.textAlign = 'center'; g.textBaseline = 'top'; g.fillStyle = tok.muted;
-      const span = x1 - x0, xs = [60, 120, 300, 600, 900, 1800, 3600, 7200].find(s => span / s <= 7) || 7200;
-      for (let t = Math.ceil(Math.max(0, x0) / xs) * xs; t <= x1; t += xs) g.fillText(fmtT(t), X(t), H - pad.b + 6);
-    }
-    // lap markers
-    g.strokeStyle = tok.muted; g.setLineDash([2, 4]); g.lineWidth = 1;
-    laps.slice(1).forEach(l => {
-      if (l >= x0 && l <= x1) { const x = Math.round(X(l)) + 0.5; g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, H - pad.b); g.stroke(); }
-    });
-    g.setLineDash([]);
-    // FTP reference
-    if (c.ftpRef) {
-      const y = Math.round(Y(ftp)) + 0.5;
-      g.strokeStyle = tok.sec; g.setLineDash([6, 5]); g.beginPath(); g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke(); g.setLineDash([]);
-      g.fillStyle = tok.sec; g.textAlign = 'left'; g.textBaseline = 'bottom'; g.fillText('FTP ' + ftp, pad.l + 4, y - 3);
-    }
-    // planned workout: target band (the on-target range) and the target line
-    if (plan.length) {
-      const tol = v => (c.key === 'power_w' ? powerTol(v) : c.key === 'heart_rate_bpm' ? HR_TOL : c.key === 'speed_kmh' ? SPEED_TOL : CAD_TOL);
-      const cl = t => Math.min(Math.max(t, x0), x1);
-      g.save(); g.beginPath(); g.rect(pad.l, pad.t, W - pad.l - pad.r, H - pad.t - pad.b); g.clip();
-      for (const p of plan) {
-        if (p.t1 <= x0 || p.t0 > x1) continue;
-        const at = t => p.a + (p.b - p.a) * ((t - p.t0) / Math.max(1, p.t1 - p.t0));
-        const ta = cl(p.t0), tb = cl(p.t1), va = at(ta), vb = at(tb);
-        g.beginPath();
-        g.moveTo(X(ta), Y(va + tol(va))); g.lineTo(X(tb), Y(vb + tol(vb)));
-        g.lineTo(X(tb), Y(Math.max(ymin, vb - tol(vb)))); g.lineTo(X(ta), Y(Math.max(ymin, va - tol(va)))); g.closePath();
-        g.fillStyle = tok.sec + '1f'; g.fill();
-        g.beginPath(); g.moveTo(X(ta), Y(va)); g.lineTo(X(tb), Y(vb));
-        g.strokeStyle = tok.sec; g.lineWidth = 1.5; g.stroke();
-      }
-      g.restore();
-    }
-    if (!vals.length) {
-      g.fillStyle = tok.muted; g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.fillText(c.key === 'heart_rate_bpm' && hist.length ? 'No heart-rate data' : 'Waiting for data…', (W + pad.l) / 2, H / 2);
-      return;
-    }
-    // line (+ area for power), broken at gaps
-    const segs = []; let cur = [];
-    data.forEach(s => { if (nz(s[c.key])) cur.push(s); else if (cur.length) { segs.push(cur); cur = []; } });
-    if (cur.length) segs.push(cur);
-    for (const seg of segs) {
-      if (c.fill) {
-        g.beginPath(); g.moveTo(X(seg[0].t), Y(ymin));
-        seg.forEach(s => g.lineTo(X(s.t), Y(s[c.key])));
-        g.lineTo(X(seg[seg.length - 1].t), Y(ymin)); g.closePath();
-        g.fillStyle = tok.col + '2e'; g.fill();
-      }
-      g.beginPath(); seg.forEach((s, i) => (i ? g.lineTo : g.moveTo).call(g, X(s.t), Y(s[c.key])));
-      g.strokeStyle = tok.col; g.lineWidth = 2; g.lineJoin = 'round'; g.stroke();
-    }
-    // hover crosshair + point
-    if (hover !== null && hover >= x0 && hover <= x1) {
-      const x = Math.round(X(hover)) + 0.5;
-      g.strokeStyle = tok.sec; g.lineWidth = 1; g.beginPath(); g.moveTo(x, pad.t); g.lineTo(x, H - pad.b); g.stroke();
-      const s = hist[hover];
-      if (s && nz(s[c.key])) {
-        g.beginPath(); g.arc(X(hover), Y(s[c.key]), 4.5, 0, Math.PI * 2);
-        g.fillStyle = tok.col; g.fill(); g.lineWidth = 2; g.strokeStyle = tok.surf; g.stroke();
-      }
-    }
-  }, [version, W, H, x0, x1, ftp, laps, hover, hist, c, plan]);
-
-  const onMove = e => {
-    const r = cv.current.getBoundingClientRect(), x = e.clientX - r.left;
-    const t = Math.round(x0 + ((x - pad.l) / (W - pad.l - pad.r)) * (x1 - x0));
-    const box = cv.current.closest('.charts').getBoundingClientRect();
-    setHover(t >= 0 && t < hist.length ? t : null, { x: e.clientX - box.left, y: e.clientY - box.top });
-  };
-
-  return (
-    <div className="chart">
-      <div className="title"><span className="key" style={{ background: `var(${c.color})` }} />{c.title}
-        {plan.length > 0 && <span className="plan-key"><span className="key" />workout target (shaded = on target)</span>}</div>
-      <canvas ref={cvRef} style={{ height: H }} onMouseMove={onMove} onMouseLeave={() => setHover(null, null)}
-              role="img" aria-label={chartSummary(c, hist)} />
-    </div>
-  );
-}
-
-function chartSummary(c, hist) {
-  let n = 0, sum = 0, max = -Infinity, last;       // one pass, no spread: rides can be hours long
-  for (const s of hist) { const v = s[c.key]; if (nz(v)) { n++; sum += v; if (v > max) max = v; last = v; } }
-  if (!n) return `${c.name}: no data yet`;
-  return `${c.name} over ${fmtT(hist.length)}: now ${last} ${c.unit}, average ${Math.round(sum / n)}, max ${max}`;
-}
-
-const TipRow = ({ col, k, v }) => (
-  <div className="row"><span className="k"><i style={{ background: col }} />{k}</span><b>{v}</b></div>
-);
-
-function Tooltip({ s, pos, ftp, boxRef }) {
-  if (!s || !pos) return null;
-  const z = s.power_w > 0 ? ZONES[zoneOf(s.power_w, ftp)].n : '';
-  // Beside the pointer, flipped to its left near the right edge. The tip's width is only known
-  // once it is in the page, so this ref callback (new each render) places it before paint.
-  const place = el => {
-    if (!el) return;
-    const bw = boxRef.current.getBoundingClientRect().width, tw = el.offsetWidth;
-    el.style.left = `${pos.x + 14 + tw > bw - 8 ? pos.x - tw - 14 : pos.x + 14}px`;
-  };
-  return (
-    <div className="tip" ref={place} style={{ display: 'block', top: Math.max(8, pos.y - 40) }}>
-      <div className="t">{fmtT(s.t)} · lap {s.lap}</div>
-      <TipRow col="var(--power)" k="Power" v={`${s.power_w} W ${z}`} />
-      <TipRow col="var(--cadence)" k="Cadence" v={`${s.cadence_rpm} rpm`} />
-      <TipRow col="var(--hr)" k="Heart rate" v={nz(s.heart_rate_bpm) ? `${s.heart_rate_bpm} bpm` : '–'} />
-      <TipRow col="var(--speed)" k="Speed" v={nz(s.speed_kmh) ? `${s.speed_kmh.toFixed(1)} km/h` : '–'} />
-      {nz(s.grade_pct) && <TipRow col="var(--text-secondary)" k="Grade" v={`${fmtGrade(s.grade_pct)} %`} />}
-    </div>
-  );
-}
-
-// Charts, Stats, time in zone and laps redraw once per ride second (`version` / `st`), not on
-// every live packet: they are memoized and the history is one array that grows in place.
-const Charts = memo(function Charts({ win, setWin, ...props }) {
-  const [hover, setHoverT] = useState(null);
-  const [pos, setPos] = useState(null);
-  const box = useRef(null);
-  const setHover = useCallback((t, p) => { setHoverT(t); setPos(p); }, []);
-  return (
-    <div className="charts" ref={box}>
-      <div className="head">
-        <h2>Ride timeline</h2>
-        <select value={win} onChange={e => setWin(+e.target.value)} aria-label="Chart time window">
-          <option value={300}>Last 5 min</option>
-          <option value={1200}>Last 20 min</option>
-          <option value={0}>Whole ride</option>
-        </select>
-      </div>
-      {CHARTS.map(c => <Chart key={c.key} c={c} {...props} win={win} hover={hover} setHover={setHover} />)}
-      <Tooltip s={hover !== null ? props.hist[hover] : null} pos={pos} ftp={props.ftp} boxRef={box} />
-    </div>
   );
 });
 
