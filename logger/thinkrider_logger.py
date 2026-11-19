@@ -620,6 +620,10 @@ async def handle_http(reader, writer, live: Live):
                                                       "name": params.get("name", "")[:100] or None}))
             elif role in ROLES and act == "auto":
                 asyncio.ensure_future(devs.set(role, {"mode": "auto"}))
+            elif role in ROLES and act == "search":         # search back on: the saved device, else any
+                c = devs.choice[role]
+                asyncio.ensure_future(devs.set(role, {**c, "mode": "device"} if c.get("address")
+                                               else {"mode": "auto"}))
             elif role in ROLES and act == "off":
                 asyncio.ensure_future(devs.set(role, {**devs.choice[role], "mode": "off"}))
             else:
