@@ -1,5 +1,5 @@
 """Self-check for the parts that must not silently break: packet decoding and the .FIT file.
-Run: uv run python -m unittest discover tests"""
+Run: uv run pytest"""
 import asyncio
 import os
 import struct

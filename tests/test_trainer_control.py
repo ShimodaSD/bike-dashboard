@@ -1,5 +1,5 @@
 """Self-check for trainer control (climb simulation / ERG) with a fake FTMS trainer.
-Run: uv run python -m unittest discover tests"""
+Run: uv run pytest"""
 import asyncio
 import os
 import struct
