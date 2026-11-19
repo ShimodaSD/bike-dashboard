@@ -423,7 +423,10 @@ td .now { font-size: 11px; font-weight: 600; color: var(--rec-text); margin-left
 .ftptest .ft-stat b { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .ftptest small { font-size: 14px; font-weight: 500; color: var(--text-secondary); }
 .ftptest .ft-msg { flex: 1 1 260px; }
+.ftptest .ft-toggle { margin-left: auto; }
+.ftptest .ft-toggle + .ft-stop { margin-left: 0; }
 .ftptest .ft-stop { margin-left: auto; }
+.ftptest .ft-hidden b { color: var(--text-muted); font-size: 20px; }
 .ftptest .ft-result { display: grid; grid-template-columns: auto 1fr; align-items: baseline; gap: 0 12px; }
 .ftptest .ft-result .ft-label { grid-column: 1 / -1; color: var(--done-text); }
 .ftptest .ft-big { font-size: 40px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.05; }

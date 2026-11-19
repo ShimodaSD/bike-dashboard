@@ -114,6 +114,11 @@ test('FTP test: start from the strip, the band counts down, stop keeps the ride'
   const band = page.getByRole('region', { name: 'FTP test' });
   await expect(band).toContainText(/The 20 minutes start in 2[45]:\d\d/);
   await expect(band).toContainText('Fan on, bottle in reach');
+  await band.getByRole('button', { name: 'Hide FTP numbers' }).click();
+  await expect(band.getByRole('button', { name: 'Show FTP numbers' })).toHaveAttribute('aria-pressed', 'true');
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'FTP test' }).getByRole('button', { name: 'Show FTP numbers' })).toBeVisible();
+  await page.getByRole('region', { name: 'FTP test' }).getByRole('button', { name: 'Show FTP numbers' }).click();
   await expect(page.getByRole('region', { name: 'Workout' })).toContainText('Step 1/5 · Warm-up');
   await band.getByRole('button', { name: 'Stop test' }).click();
   await page.waitForTimeout(600);

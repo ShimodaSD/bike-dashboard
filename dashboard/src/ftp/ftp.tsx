@@ -7,6 +7,7 @@
 // FTP itself stays a setting of this browser: a result changes it only when you press Use.
 import { useState } from 'react';
 import { useArmed } from '../hooks/hooks';
+import { useStored } from '../hooks/stored';
 import { fmtT } from '../util/ride';
 import type { FtpResult, FtpStatus, FtpStep, FtpTestRun, RideState, Sample } from '../types/feed';
 import type { Workout } from '../types/workout';
@@ -103,6 +104,8 @@ interface FtpTestBandProps {
 export function FtpTestBand({ ftpStatus, hist, mode, ftp, setFtp }: FtpTestBandProps) {
   const run = ftpStatus.test!;
   const [stopArmed, pressStop] = useArmed(run.state);
+  // Hide the running average and FTP so far (ride by feel); remembered in this browser.
+  const [hideLive, setHideLive] = useStored('ftpHideLive', false);
   // "Keep" hides the new-FTP question for this result (a new result asks again)
   const [kept, setKept] = useState<string | null>(null);
   const res = run.result;
@@ -145,12 +148,17 @@ export function FtpTestBand({ ftpStatus, hist, mode, ftp, setFtp }: FtpTestBandP
     {p.phase === 'before' && <span className="ft-msg">
       The 20 minutes start in <b>{fmtT(p.until)}</b>. {tip}</span>}
     {p.phase === 'test' && <>
-      <span className="ft-stat"><span className="ft-label">20 min avg</span><b>{p.avg == null ? '–' : Math.round(p.avg)}<small> W</small></b></span>
-      <span className="ft-stat"><span className="ft-label">FTP so far</span><b>{p.ftp ?? '–'}<small> W</small></b></span>
+      {hideLive ? <span className="ft-stat ft-hidden"><span className="ft-label">20 min avg · FTP so far</span><b>Hidden</b></span> : <>
+        <span className="ft-stat"><span className="ft-label">20 min avg</span><b>{p.avg == null ? '–' : Math.round(p.avg)}<small> W</small></b></span>
+        <span className="ft-stat"><span className="ft-label">FTP so far</span><b>{p.ftp ?? '–'}<small> W</small></b></span>
+      </>}
       <span className="ft-stat"><span className="ft-label">Left</span><b>{fmtT(p.left)}</b></span>
       <span className="ft-msg ft-tip">{tip}</span>
     </>}
     {p.phase === 'after' && <span className="ft-msg">Working out your FTP…</span>}
+    {p.phase !== 'after' && <button className="quiet ft-toggle" aria-pressed={hideLive} onClick={() => setHideLive(!hideLive)}
+            title="The running average and FTP so far, during the 20 minutes">
+      {hideLive ? 'Show FTP numbers' : 'Hide FTP numbers'}</button>}
     <button className={'quiet ft-stop' + (stopArmed ? ' danger armed' : '')} onClick={() => pressStop(cancelFtpTest)}>
       {stopArmed ? `${PRESS} again to stop the test` : 'Stop test'}</button>
   </section>;

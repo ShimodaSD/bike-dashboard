@@ -144,6 +144,7 @@ its battery (change it there).
 you through the classic 20-minute test, about 55 min in all: 10 min warm-up (50 to 70 % FTP),
 5 min hard, 10 min easy, **20 min as hard as you can hold**, 10 min cool-down. A band at the top
 counts down to the 20 minutes, then shows the 20-minute average so far and the FTP it gives.
+**Hide FTP numbers** hides those two (ride by feel); the choice is remembered in the browser.
 FTP = 95 % of the 20-minute average (seconds at 0 W count). The test's steps take the place of a
 loaded workout while it runs. With **Trainer control** in ERG mode, the trainer holds the warm-up
 and easy targets and switches to Climb at 0 % for the hard efforts, so you set the power.

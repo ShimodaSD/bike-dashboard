@@ -81,6 +81,34 @@ describe('while the test runs', () => {
     expect(screen.getByRole('region', { name: 'Workout' })).toHaveTextContent('Your pace');
   });
 
+  it('Hide FTP numbers hides the running average and FTP so far, and is remembered', async () => {
+    const hist = ride([...new Array(1500).fill(120), ...new Array(600).fill(260)]);
+    const user = await renderApp(recording({ ftp: ftpStatus({}) }), hist);
+    await user.click(screen.getByRole('button', { name: 'Hide FTP numbers' }));
+    expect(band()).not.toHaveTextContent('260 W');
+    expect(band()).not.toHaveTextContent('247 W');
+    expect(band()).toHaveTextContent('Hidden');
+    expect(band()).toHaveTextContent('Left10:00');
+    expect(screen.getByRole('button', { name: 'Show FTP numbers' })).toHaveAttribute('aria-pressed', 'true');
+    expect(localStorage.getItem('x2max.ftpHideLive')).toBe('true');
+    await user.click(screen.getByRole('button', { name: 'Show FTP numbers' }));
+    expect(band()).toHaveTextContent('FTP so far247 W');
+  });
+
+  it('a hidden choice from an earlier test stays hidden', async () => {
+    localStorage.setItem('x2max.ftpHideLive', 'true');
+    await renderApp(recording({ ftp: ftpStatus({}) }), ride([...new Array(1500).fill(120), ...new Array(60).fill(250)]));
+    expect(band()).not.toHaveTextContent('250 W');
+    expect(band()).toHaveTextContent('Hidden');
+    expect(screen.getByRole('button', { name: 'Show FTP numbers' })).toBeInTheDocument();
+  });
+
+  it('the result still shows the FTP', async () => {
+    localStorage.setItem('x2max.ftpHideLive', 'true');
+    await renderApp({ ...finished(), ftp: ftpStatus({ state: 'done', result: result() }, [result()]) }, ride([200]));
+    expect(band()).toHaveTextContent('New FTP247 W');
+  });
+
   it('Stop test needs a second press and keeps the ride going', async () => {
     const user = await renderApp(recording({ ftp: ftpStatus({}) }), ride([100]));
     await user.click(screen.getByRole('button', { name: 'Stop test' }));
