@@ -57,6 +57,8 @@ import csv
 import json
 import os
 import glob
+import ipaddress
+import math
 import random
 import signal
 import socket
@@ -568,6 +570,31 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HTML_PATH = os.path.join(ROOT, "dashboard", "dashboard.html")
 
 
+def is_local_host(host_header):
+    """True when the Host header names this computer the way a rider reaches it: localhost,
+    an IP address (phone on the Wi-Fi), the computer's name or its .local name. A page on
+    another site that makes its own name resolve to 127.0.0.1 (DNS rebinding) sends its own
+    name here, so its POSTs are refused even though its Origin matches that Host."""
+    host = urllib.parse.urlsplit("//" + (host_header or "")).hostname
+    if not host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    me = socket.gethostname().lower().removesuffix(".local")
+    return host in ("localhost", me) or host.endswith(".localhost") or host.endswith(".local")
+
+
+def finite(text):
+    """float() that refuses nan and inf (they would clamp to the hardest grade / most power)."""
+    v = float(text)
+    if not math.isfinite(v):
+        raise ValueError("not a finite number")
+    return v
+
+
 async def handle_http(reader, writer, live: Live):
     q = None
     try:
@@ -580,7 +607,8 @@ async def handle_http(reader, writer, live: Live):
         path, _, query = path.partition("?")
         # Any web page can POST to localhost; browsers send Origin, so refuse other sites.
         origin = headers.get("origin")
-        if method == "POST" and origin and urllib.parse.urlsplit(origin).netloc != headers.get("host"):
+        if method == "POST" and (not is_local_host(headers.get("host")) or origin
+                                 and urllib.parse.urlsplit(origin).netloc != headers.get("host")):
             writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
             return
@@ -643,9 +671,9 @@ async def handle_http(reader, writer, live: Live):
                 if act == "" and params.get("on") in ("0", "1"):
                     ctl.set_enabled(params["on"] == "1")
                 elif act == "/grade":
-                    ctl.set_grade(float(params["pct"]))
+                    ctl.set_grade(finite(params["pct"]))
                 elif act == "/power":
-                    ctl.set_power(float(params["w"]))
+                    ctl.set_power(finite(params["w"]))
                 else:
                     raise ValueError
             except (KeyError, ValueError, OverflowError):
@@ -923,8 +951,9 @@ def _summary(rows):
     cad = [r["cadence_rpm"] for r in rows if r["cadence_rpm"]]
     hr = [r["heart_rate_bpm"] for r in rows if r["heart_rate_bpm"]]
     spd = [r["speed_kmh"] / 3.6 for r in rows if r["speed_kmh"] is not None]
-    roll = [sum(pw[max(0, i - 29):i + 1]) / min(i + 1, 30) for i in range(len(pw))]
-    np_ = (sum(x ** 4 for x in roll) / len(roll)) ** 0.25 if len(pw) >= 30 else None
+    # NP: 4th-power mean of the 30 s rolling average, full 30 s windows only (as the dashboard does)
+    roll = [sum(pw[i - 29:i + 1]) / 30 for i in range(29, len(pw))]
+    np_ = (sum(x ** 4 for x in roll) / len(roll)) ** 0.25 if roll else None
     work_j = sum(max(p, 0) for p in pw)
     return {
         "avg_power": sum(pw) / len(pw), "max_power": max(pw), "np": np_,
