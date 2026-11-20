@@ -5,6 +5,7 @@
 //   POST /start, /finish   begin / end a recorded ride
 //   POST /devices/scan, /devices/use|search|off?role=trainer|hr   device panel
 //   POST /control?on=1|0, /control/grade?pct=, /control/power?w=   trainer control (control/climb.jsx)
+//   POST /ftp-test/start|cancel|delete   guided FTP test and its saved results (ftp/ftp.tsx)
 //   POST /clear   empty the dashboard (files on disk stay)
 //   POST /quit    stop the logger
 //   GET  /ride.fit  the finished ride (or the ride so far)
@@ -21,6 +22,7 @@ import { useStored } from './hooks/stored';
 import { useArmed, useEvent } from './hooks/hooks';
 import { ZONES, nz, fmtT, zoneOf, stats, bestPower, tssOf, fmtTss, avg3, livePower, type RideStats } from './util/ride';
 import { Charts } from './charts/charts';
+import { FtpTestBand, FtpTestSettings, protocolWorkout, startFtpTest, type FtpTestSettingsProps } from './ftp/ftp';
 import type { DeviceChoice, DeviceKind, DeviceRole, FoundDevice, HrState, HrStatus, LiveValues, RideState,
   RideStatus, Sample, ScanStatus, Status, TrainerState } from './types/feed';
 import type { Workout } from './types/workout';
@@ -201,11 +203,16 @@ interface SettingsProps {
   ftp: number; setFtp: (v: number) => void; kg: number | null; setKg: (v: number | null) => void;
   onCsv: () => void; canCsv: boolean; smooth: number; setSmooth: (v: number) => void;
   liveRate: LiveRate; setLiveRate: (v: LiveRate) => void; recording: boolean; workout: WorkoutSettingsProps;
+  ftpTest?: FtpTestSettingsProps;
 }
-export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout }: SettingsProps) {
+export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout, ftpTest }: SettingsProps) {
   return (
     <section className="settings">
       <FtpField key={ftp} ftp={ftp} setFtp={setFtp} />
+      {ftpTest && <div className="field">
+        <span className="flabel">FTP test</span>
+        <FtpTestSettings {...ftpTest} />
+      </div>}
       <WeightField key={kg ?? ''} kg={kg} setKg={setKg} />
       <div className="field">
         <label htmlFor="smooth">Power number</label>
@@ -562,14 +569,16 @@ function SendTo({ ride, href, label, className = '', used, onDownload }: SendToP
 interface RideStripProps {
   ride: Partial<RideStatus>; seconds: number; startArmed: boolean; lapFlash: number; sent: Sent;
   onDownload: (...to: string[]) => void;
+  onFtpTest?: () => void;                           // Start FTP test (ready state)
+  ftpTest?: boolean;                                // this ride is an FTP test
 }
-export function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownload }: RideStripProps) {
+export function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownload, onFtpTest, ftpTest }: RideStripProps) {
   const dir = ride.dir ? `${ride.dir}/` : 'the ride folder';
   let cls = 'ready', body: ReactNode;
   if (ride.state === 'recording') {
     cls = 'rec';
     body = <><span className="badge rec">REC</span>
-      <span>Recording ride {ride.n || 1} · saved every second to <b>{dir}</b></span>
+      <span>Recording {ftpTest ? 'FTP test' : 'ride'} {ride.n || 1} · saved every second to <b>{dir}</b></span>
       {lapFlash ? <span className="flash">Lap {lapFlash} started</span> : null}</>;
   } else if (ride.state === 'finished' && ride.fit) {
     cls = 'done';
@@ -593,7 +602,8 @@ export function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownloa
     body = <span>Ride finished. Nothing was recorded.</span>;
   } else {
     body = <><span className="badge">Preview</span>
-      <span>Live numbers only. Nothing is saved until you press <b>Start</b>.</span></>;
+      <span>Live numbers only. Nothing is saved until you press <b>Start</b>.</span>
+      {onFtpTest && <button className="ftp-start" onClick={onFtpTest}>Start FTP test</button>}</>;
   }
   return <div className={'strip ' + cls} role="status" aria-live="polite">{body}</div>;
 }
@@ -646,6 +656,7 @@ export function App() {
   }
   const [finishArmed, pressFinish] = useArmed(ride.state);
   const [startArmed, pressStart] = useArmed(ride.state);
+  const [testArmed, pressTest] = useArmed(ride.state);
   const lapStart = laps[laps.length - 1] || 0;
   const lapFlash = mode === 'recording' && laps.length > 1 && hist.length - lapStart < LAP_FLASH_S ? laps.length : 0;
 
@@ -670,13 +681,21 @@ export function App() {
     finish: () => pressFinish(() => post('/finish')),
     start: () => unsaved ? pressStart(() => post('/start')) : post('/start'),
   };
+  // FTP test: the logger runs it as a ride; while it is on, its steps replace the loaded workout.
+  const ftpStatus = status.ftp;
+  const ftpRun = ftpStatus?.test ?? null;
+  const startTest = () => unsaved ? pressTest(() => startFtpTest(ftp)) : startFtpTest(ftp);
+  const testWo = useMemo(() => (ftpStatus ? protocolWorkout(ftpStatus.protocol) : null), [ftpStatus?.protocol]); // eslint-disable-line react-hooks/exhaustive-deps
+  const testing = !!ftpRun && mode === 'recording';
+  const activeWo = testing ? testWo : wo;
 
   // trainer control: climb / ERG, workout steps drive it while recording
   const ctl = status.control;
-  const woAt = wo && mode === 'recording' ? workoutAt(wo, hist.length, ftp) : null;
+  const woAt = activeWo && mode === 'recording' ? workoutAt(activeWo, Math.max(0, hist.length - (testing ? ftpRun?.t0 ?? 0 : 0)), ftp) : null;
   useWorkoutControl({ ctl, at: woAt, recording: mode === 'recording' });
-  const woDrives = wo && wo.segs.some(s => s.grade != null) ? 'Workout steps with a grade set it when they start.'
-                 : wo && ctl && ctl.mode === 'erg' ? 'The workout sets the power at each step.' : null;
+  const woDrives = testing && ctl && ctl.mode === 'erg' ? 'The FTP test sets the power at each step and lets you set it in the hard efforts.'
+                 : activeWo && activeWo.segs.some(s => s.grade != null) ? 'Workout steps with a grade set it when they start.'
+                 : activeWo && ctl && ctl.mode === 'erg' ? 'The workout sets the power at each step.' : null;
   const showCtl = ctl && (status.connected || ctl.enabled || ctl.msg);
 
   // Keys: S start, L lap, F finish, − / + grade or ERG power. One document listener for the
@@ -704,13 +723,17 @@ export function App() {
         <Devices status={status} recording={mode === 'recording'} /></Drawer>}
       {panel === 'settings' && <Drawer id="settings" title="Settings" onClose={closePanel}><Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
                                  onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} recording={mode === 'recording'}
-                                 workout={{ wo, setWo, sound: woSound, setSound: setWoSound }} /></Drawer>}
+                                 workout={{ wo, setWo, sound: woSound, setSound: setWoSound }}
+                                 ftpTest={{ ftpStatus, ftp, setFtp, recording: mode === 'recording', startArmed: testArmed, onStart: startTest }} /></Drawer>}
       {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
       <RideStrip ride={ride} seconds={hist.length} startArmed={startArmed} lapFlash={lapFlash}
-                 sent={sent || NOT_SENT} onDownload={markSent} />
+                 sent={sent || NOT_SENT} onDownload={markSent} ftpTest={testing}
+                 onFtpTest={ftpStatus && online ? startTest : undefined} />
+      {ftpStatus && ftpRun && mode !== 'ready' && <FtpTestBand ftpStatus={ftpStatus} hist={hist} mode={mode} ftp={ftp} setFtp={setFtp} />}
       {showCtl && <ClimbBand ctl={ctl} ftp={ftp} follow={woDrives} />}
-      {wo && mode !== 'finished' ? <WorkoutBand wo={wo} t={hist.length} mode={mode} ftp={ftp} sound={woSound} onRemove={() => setWo(null)}
+      {activeWo && mode !== 'finished' ? <WorkoutBand wo={activeWo} t={Math.max(0, hist.length - (testing ? ftpRun?.t0 ?? 0 : 0))} mode={mode} ftp={ftp} sound={woSound}
+                            onRemove={testing ? undefined : () => setWo(null)}
                             power={fresh ? livePower(now, recent, 3) : last ? avg3(hist) : null}
                             cadence={fresh ? now.cadence_rpm : last ? last.cadence_rpm : null}
                             hr={fresh ? now.heart_rate_bpm : last ? last.heart_rate_bpm : null}
@@ -720,7 +743,7 @@ export function App() {
       <Stats hist={hist} st={st} ftp={ftp} kg={kg} more={more} setMore={setMore} mode={mode} />
       <section className="main">
         <Charts hist={hist} laps={laps} ftp={ftp} win={win} setWin={setWin} version={version}
-                workout={wo} />
+                workout={testing || (ftpRun && mode === 'finished') ? testWo : wo} />
         <div className="side">
           <TimeInZone st={st} ftp={ftp} />
           <Laps hist={hist} laps={laps} ftp={ftp} recording={mode === 'recording'} version={version} />

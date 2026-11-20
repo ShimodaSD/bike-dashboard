@@ -34,7 +34,7 @@ test('preview shows live numbers but saves nothing', async ({ page }) => {
 });
 
 test('start, lap, finish, download the .FIT, resume', async ({ page, request }) => {
-  await page.getByRole('button', { name: /^Start/ }).click();
+  await page.getByRole('button', { name: /^Start(?! FTP)/ }).click();
   await expect(strip(page)).toContainText('Recording ride');
   await expect(rideTime(page)).toHaveText(/0:0[3-9]/, { timeout: 8000 });
 
@@ -70,7 +70,7 @@ test('start, lap, finish, download the .FIT, resume', async ({ page, request }) 
 });
 
 test('a double tap on Finish does not end the ride', async ({ page }) => {
-  await page.getByRole('button', { name: /^Start/ }).click();
+  await page.getByRole('button', { name: /^Start(?! FTP)/ }).click();
   await expect(rideTime(page)).toHaveText(/0:0[1-9]/, { timeout: 5000 });
   await page.getByRole('button', { name: /^Finish/ }).dblclick();
   await expect(strip(page)).toContainText('Recording ride');
@@ -99,13 +99,46 @@ test('workout: load in Settings, the band follows the ride', async ({ page }) =>
   await closeDrawer(page);
   const band = page.getByRole('region', { name: 'Workout' });
   await expect(band).toContainText('Starts when you press Start');
-  await page.getByRole('button', { name: /^Start/ }).click();
+  await page.getByRole('button', { name: /^Start(?! FTP)/ }).click();
   await expect(band).toContainText('Step 1/8 · Warm-up');
   await expect(band).toContainText(/left/);
   await expect(page.getByRole('img', { name: /^Power over/ })).toBeVisible();
   await finish(page);
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('button', { name: 'Remove' }).click();
+});
+
+test('FTP test: start from the strip, the band counts down, stop keeps the ride', async ({ page }) => {
+  await strip(page).getByRole('button', { name: 'Start FTP test' }).click();
+  await expect(strip(page)).toContainText('Recording FTP test');
+  const band = page.getByRole('region', { name: 'FTP test' });
+  await expect(band).toContainText(/The 20 minutes start in 2[45]:\d\d/);
+  await expect(band).toContainText('Fan on, bottle in reach');
+  await band.getByRole('button', { name: 'Hide FTP numbers' }).click();
+  await expect(band.getByRole('button', { name: 'Show FTP numbers' })).toHaveAttribute('aria-pressed', 'true');
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'FTP test' }).getByRole('button', { name: 'Show FTP numbers' })).toBeVisible();
+  await page.getByRole('region', { name: 'FTP test' }).getByRole('button', { name: 'Show FTP numbers' }).click();
+  await expect(page.getByRole('region', { name: 'Workout' })).toContainText('Step 1/5 · Warm-up');
+  await band.getByRole('button', { name: 'Stop test' }).click();
+  await page.waitForTimeout(600);
+  await band.getByRole('button', { name: /again to stop the test/ }).click();
+  await expect(band).toHaveCount(0);
+  await expect(strip(page)).toContainText('Recording ride');
+  await finish(page);
+});
+
+test('FTP test: Settings has the start button and a guide for the rider', async ({ page }) => {
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const settings = page.locator('#settings');
+  await expect(settings.getByRole('button', { name: 'Start FTP test' })).toBeEnabled();
+  await expect(settings.getByText('A fan on you')).toBeHidden();
+  await settings.getByText('How to get a good test').click();
+  await expect(settings.getByText(/A fan on you/)).toBeVisible();
+  await expect(settings.getByText(/Start a little conservative, near your current FTP/)).toBeVisible();
+  await expect(settings.getByText(/about 35 to 50 minutes/)).toBeVisible();
+  await expect(settings.getByText(/Every 4 to 8 weeks/)).toBeVisible();
+  await closeDrawer(page);
 });
 
 test('trainer control: climb in demo', async ({ page }) => {

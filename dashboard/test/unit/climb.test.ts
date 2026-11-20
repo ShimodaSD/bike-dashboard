@@ -65,6 +65,25 @@ describe('workout steps drive the trainer', () => {
     expect(sent).toHaveLength(2 + 20);                  // 160, then 100, 105 … 200
   });
 
+  it('ERG: a step without a power target hands back to Climb, the next power step goes back to ERG', () => {
+    const wo = parseWorkout(`<workout_file><workout><SteadyState Duration="60" Power="0.5"/><MaxEffort Duration="60"/>
+      <SteadyState Duration="60" Power="0.6"/></workout></workout_file>`, 'ftp.zwo');
+    const { rerender } = renderHook(({ t, c }) => useWorkoutControl({ ctl: c, at: workoutAt(wo, t, 200), recording: true }),
+                                    { initialProps: { t: 0, c: ctl({ mode: 'erg' }) } });
+    rerender({ t: 60, c: ctl({ mode: 'erg' }) });
+    for (let t = 61; t < 120; t++) rerender({ t, c: ctl({ mode: 'sim', grade: 0 }) });   // the logger switched
+    rerender({ t: 120, c: ctl({ mode: 'sim', grade: 0 }) });
+    expect(posted()).toEqual(['/control/power?w=100', '/control/grade?pct=0', '/control/power?w=120']);
+  });
+
+  it('Climb: a free step without a grade leaves the trainer alone', () => {
+    const wo = parseWorkout(`<workout_file><workout><FreeRide Duration="60"/><SteadyState Duration="60" Power="0.6"/></workout></workout_file>`, 'f.zwo');
+    const { rerender } = renderHook(({ t }) => useWorkoutControl({ ctl: ctl(), at: workoutAt(wo, t, 200), recording: true }),
+                                    { initialProps: { t: 0 } });
+    rerender({ t: 70 });
+    expect(posted()).toEqual([]);
+  });
+
   it('nothing when control is off or not recording', () => {
     hook(ctl({ enabled: false }));
     hook(ctl(), false);

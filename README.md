@@ -9,16 +9,19 @@ smart trainer) and watch a live training dashboard in your browser.
 Start X2Max.command   double-click to start (macOS)
 logger/               thinkrider_logger.py: Bluetooth, recording, .FIT, web server
                       trainer_control.py: climb simulation / ERG over FTMS (off by default)
+                      ftp_test.py: the guided FTP test and its saved results
 dashboard/            dashboard.html (built, served by the logger) and its React + TypeScript source in src/
   src/types/          the logger's SSE payloads (feed.ts) and the workout model (workout.ts)
   src/workout/        workout files: reading .zwo / .erg / .mrc, step targets, off-target beep
   src/control/        Trainer control band: grade slider, ERG, workout grades
+  src/ftp/            FTP test: start button, test band, result and saved results
   src/util/           ride maths: zones, NP, TSS, lap stats
   test/               dashboard tests: unit/ (Vitest), components/ (React Testing Library), e2e/ (Playwright)
 tests/                logger tests (pytest); helpers/ has the fake Bluetooth, a .FIT reader and an HTTP client
 workouts/             test workouts: power, heart rate, cadence and speed targets (load them in Settings)
 rides/                your recordings, one folder per run (not committed)
-config/               devices.json (your trainer / HR pick), kept on this computer (not committed)
+config/               devices.json (your trainer / HR pick) and ftp_tests.json (FTP test results),
+                      kept on this computer (not committed)
 ```
 
 New code goes in the folder it belongs to; a new dashboard feature gets its own folder in
@@ -135,6 +138,29 @@ Power number** switches between instant power and a 3 s / 5 s average. **Live up
 is instant on a computer and capped at 2 updates a second on a phone or tablet to save
 its battery (change it there).
 
+### FTP test
+
+**Start FTP test** (on the Preview strip, or **Settings > FTP test**) starts a ride that guides
+you through the classic 20-minute test, about 55 min in all: 10 min warm-up (50 to 70 % FTP),
+5 min hard, 10 min easy, **20 min as hard as you can hold**, 10 min cool-down. A band at the top
+counts down to the 20 minutes, then shows the 20-minute average so far and the FTP it gives.
+**Hide FTP numbers** hides those two (ride by feel); the choice is remembered in the browser.
+FTP = 95 % of the 20-minute average (seconds at 0 W count). The test's steps take the place of a
+loaded workout while it runs. With **Trainer control** in ERG mode, the trainer holds the warm-up
+and easy targets and switches to Climb at 0 % for the hard efforts, so you set the power.
+
+When the 20 minutes end the result is saved on this computer in `config/ftp_tests.json`, so every
+browser and phone sees it. The band then asks **Use 249 W** or **Keep**: FTP changes only if you
+press Use. Finishing before the 20 minutes end saves nothing (**Resume ride** carries on with the
+test). **Settings > FTP test** lists past results, newest first, with **Use** and **Delete**.
+`--demo` keeps its results in memory only.
+
+The band also coaches the test as it goes: what each step is for, a starting pace for the 20
+minutes (your current FTP ÷ 0.95), steady pacing in the middle and when to push at the end. The
+result explains what the number means (power you can hold for about 35 to 50 minutes; 95 % reads
+a little high for many riders) and when to test again (4 to 8 weeks). **Settings > FTP test > How
+to get a good test** has the full checklist: rested, fed, a fan, the same setup every time.
+
 ### Workouts
 
 **Settings > Workout > Load workout** reads a Zwift `.zwo`, an `.erg` (watts) or an `.mrc`
@@ -178,7 +204,7 @@ sends: change both together.
 The script talks to the page over `GET /events` (Server-Sent Events: `init`,
 `sample`, `preview`, `live`, `status`, `laps`; `/events?live=2` caps `live` at 2/s), `POST /start`, `/finish`, `/lap`, `/clear`, `/quit`,
 `POST /devices/scan`, `/devices/use?role=trainer|hr&address=..&name=..`,
-`/devices/off?role=..` and `GET /ride.fit`. POSTs from other
+`/devices/off?role=..`, `/ftp-test/start?ftp=..`, `/ftp-test/cancel`, `/ftp-test/delete?id=..` and `GET /ride.fit`. POSTs from other
 sites are refused (the Origin must match, and the Host must be localhost, an IP address or a
 `.local` name).
 

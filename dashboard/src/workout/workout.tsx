@@ -217,6 +217,8 @@ function profileOf(wo: Workout, ftp: number): Profile {
   return { v, free: s => (k === 'p' ? s.lo == null : !s[k]) };
 }
 
+const hasTarget = (s: Segment) => s.lo != null || s.grade != null || !!s.spd || !!s.hr || !!s.cad;
+
 // The step's targets: the first one big, the others small beside it.
 function targetText(at: WorkoutAt): ReactNode {
   const { lo } = at.s;
@@ -228,14 +230,15 @@ function targetText(at: WorkoutAt): ReactNode {
     at.s.hr && [`${at.s.hr} bpm`, ''],
     at.s.cad && [`${at.s.cad} rpm`, ''],
   ].filter((x): x is [string, string] => Boolean(x));
-  if (!all.length) return 'No target';
+  if (!all.length) return at.s.note || 'No target';
   return <>{all[0][0]}<small>{all[0][1]}</small>{all.slice(1).map(([v, x]) => <small key={v}> · {v}{x}</small>)}</>;
 }
 
 // Workout band: current step, target, time left, on/off target, and a small profile of the whole workout.
 interface WorkoutBandProps {
   wo: Workout; t: number; mode: 'ready' | 'recording' | 'finished'; ftp: number;
-  power: Reading; cadence: Reading; hr: Reading; speed: Reading; sound: boolean; onRemove: () => void;
+  power: Reading; cadence: Reading; hr: Reading; speed: Reading; sound: boolean;
+  onRemove?: () => void;                            // no Remove button without it (FTP test)
 }
 export function WorkoutBand({ wo, t, mode, ftp, power, cadence, hr, speed, sound, onRemove }: WorkoutBandProps) {
   const at = mode === 'ready' ? workoutAt(wo, 0, ftp) : workoutAt(wo, t, ftp);
@@ -257,7 +260,7 @@ export function WorkoutBand({ wo, t, mode, ftp, power, cadence, hr, speed, sound
       <div className="wo-head">
         <span className="wo-name">{wo.name}</span>
         <span className="wo-meta">{fmt(Math.min(mode === 'ready' ? 0 : t, wo.total))} / {fmt(wo.total)}</span>
-        <button className="quiet" onClick={onRemove}>Remove</button>
+        {onRemove && <button className="quiet" onClick={onRemove}>Remove</button>}
       </div>
       {done || !at ? <div className="wo-now"><b>Workout complete.</b> Keep riding or press Finish.</div> : (
         <div className="wo-now">
@@ -267,6 +270,7 @@ export function WorkoutBand({ wo, t, mode, ftp, power, cadence, hr, speed, sound
           <span className={'wo-state ' + (off ? 'bad' : 'ok')} role="status">
             {mode === 'ready' ? 'Starts when you press Start'
               : off ? `${MSG[off]}${d && d.v != null ? ` · ${signed(Math.round(d.v - d.target))} ${d.unit}` : ''}`
+              : !hasTarget(at.s) ? 'Your pace'
               : at.into < (at.s.hr && at.target == null ? HR_GRACE_S : GRACE_S) ? 'Get to the target' : 'On target'}</span>
           {at.next && <span className="wo-next">Next: {segText(at.next, ftp)} for {fmt(at.next.dur)}</span>}
         </div>)}
