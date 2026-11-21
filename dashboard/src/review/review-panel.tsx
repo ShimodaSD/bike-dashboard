@@ -1,6 +1,6 @@
 // Ride review panel on the finished screen: the ride type and load up top, then a few notes on
 // what went well and what to watch (review.ts works them out). Derived while rendering.
-import { memo } from 'react';
+import { memo, useId } from 'react';
 import type { Sample } from '../types/feed';
 import type { Workout } from '../types/workout';
 import type { RideStats } from '../util/ride';
@@ -14,11 +14,12 @@ interface RideReviewProps {
 }
 export const RideReview = memo(function RideReview({ hist, st, ftp, workout, woStart, ftpTest }: RideReviewProps) {
   const r = reviewRide({ hist, st, ftp, workout, woStart, ftpTest });
+  const hid = useId();
   return (
-    <section className="review panel" aria-labelledby="review-h">
+    <section className="review panel" aria-labelledby={hid}>
       <div className="rv-head">
         <div className="rv-title">
-          <h2 id="review-h">Ride review</h2>
+          <h2 id={hid}>Ride review</h2>
           <p className="rv-kind">{r.tooShort ? 'Short ride' : r.kind}
             {!r.tooShort && r.tss !== null && <span className="rv-load">{r.load}</span>}</p>
         </div>

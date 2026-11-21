@@ -68,6 +68,13 @@ describe('heart-rate drift (Pw:HR)', () => {
     expect(r.decoupling).toBeNull();
   });
 
+  it('is not judged when the power steps up halfway', () => {
+    const step = ride([...steady(150, 1800), ...steady(200, 1800)]).map((s, t) => ({ ...s, heart_rate_bpm: t < 1800 ? 130 : 145 }));
+    const r = reviewRide({ hist: step, ftp: 250 });
+    expect(note(r, 'hr')?.title).toBe('Heart-rate drift not judged');
+    expect(r.decoupling).toBeNull();
+  });
+
   it('needs heart rate', () => {
     const r = reviewRide({ hist: ride(steady(150, 3600), { heart_rate_bpm: null }), ftp: FTP });
     expect(r.decoupling).toBeNull();

@@ -127,7 +127,10 @@ export function reviewRide({ hist, ftp, workout, woStart = 0, ftpTest = false, s
     const efOf = (a: Sample[]) => a.reduce((t, s) => t + s.power_w, 0) / a.reduce((t, s) => t + (s.heart_rate_bpm as number), 0);
     const e1 = efOf(body.slice(0, half)), e2 = efOf(body.slice(half));
     decoupling = ((e1 - e2) / e1) * 100;
-    if (steady) {
+    // Pw:HR assumes the same effort in both halves: a step up or down in power isn't drift
+    const avgW = (a: Sample[]) => a.reduce((t, s) => t + s.power_w, 0) / (a.length || 1);
+    const p1 = avgW(body.slice(0, half)), p2 = avgW(body.slice(half));
+    if (steady && Math.abs(p2 - p1) <= 0.1 * p1) {
       const d = decoupling;
       notes.push(d < 5
         ? { id: 'hr', tone: 'good', title: `Heart rate held (${d.toFixed(1)}% drift)`,
@@ -140,7 +143,7 @@ export function reviewRide({ hist, ftp, workout, woStart = 0, ftpTest = false, s
     } else {
       decoupling = null;                 // intervals or surges: the number would mislead
       notes.push({ id: 'hr', tone: 'info', title: 'Heart-rate drift not judged',
-        text: 'The power changed too much (intervals or surges) for heart-rate drift to say anything about aerobic fitness.' });
+        text: 'The power changed too much (intervals, surges, or a different effort in each half) for heart-rate drift to say anything about aerobic fitness.' });
     }
   }
 

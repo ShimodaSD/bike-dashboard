@@ -1,6 +1,8 @@
 // The whole dashboard against a fake logger stream: Start, Lap, Finish (two presses), keys,
 // the ride strip and the finished screen. Charts are stubbed (uPlot needs a real canvas;
 // the end-to-end tests cover them).
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -162,6 +164,27 @@ describe('ride review', () => {
     expect(within(review).getByText('Tempo ride')).toBeInTheDocument();
     expect(review).toHaveTextContent('Moderate load');
     expect(review).toHaveTextContent('Heart rate held');
+  });
+
+  it('reviews a ride file without touching the live ride', async () => {
+    const user = await renderApp();
+    await user.click(screen.getByRole('button', { name: 'Review a ride file' }));
+    const drawer = screen.getByRole('complementary', { name: 'Review a ride file' });
+    const fit = readFileSync(join(import.meta.dirname, '../fixtures/ride.fit'));
+    await user.upload(within(drawer).getByLabelText('Choose a ride file'), new File([fit], 'ride.fit'));
+    const review = await within(drawer).findByRole('region', { name: 'Ride review' }, { timeout: 3000 });
+    expect(review).toHaveTextContent('Sweet spot ride');            // FTP 200: 15 min at 150 W, 15 at 200 W
+    expect(review).toHaveTextContent('Heart-rate drift not judged');  // power stepped up halfway
+    expect(drawer).toHaveTextContent('29:30');
+    expect(posted()).toEqual([]);                                     // nothing sent to the logger
+  });
+
+  it('says when a file cannot be read', async () => {
+    const user = await renderApp();
+    await user.click(screen.getByRole('button', { name: 'Review a ride file' }));
+    const drawer = screen.getByRole('complementary', { name: 'Review a ride file' });
+    await user.upload(within(drawer).getByLabelText('Choose a ride file'), new File(['nope'], 'ride.fit'));
+    expect(await within(drawer).findByRole('alert', {}, { timeout: 3000 })).toHaveTextContent('This .fit file is empty or cut short.');
   });
 
   it('is only on the finished screen', async () => {
