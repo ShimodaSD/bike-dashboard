@@ -15,11 +15,14 @@
 // State comes from two external stores read with useSyncExternalStore: the logger's live feed
 // (hooks/feed.js) and settings in localStorage (hooks/stored.js). Everything else is derived while
 // rendering. Effects are kept for real outside systems only: feeding the uPlot charts, document key
-// and focus handling, the device scan while that panel is open, and the trainer / audio.
-import { memo, useState, useEffect, useRef, useMemo, useCallback, type CSSProperties, type ReactNode } from 'react';
+// handling, the device scan while the Devices page is open, and the trainer / audio.
+//
+// Pages (hooks/route.ts, nav/nav.tsx): Live, Training, Past rides, Devices, Settings, picked by the
+// URL hash. The feed and the ride buttons live above the pages, so a ride keeps recording and stays
+// in reach on every page.
+import { memo, useState, useEffect, useRef, useMemo, type CSSProperties, type ReactNode } from 'react';
 import { WorkoutBand, WorkoutSettings, workoutAt, tileTargets, type TileTarget, type TileTargets } from './workout/workout';
 import { ClimbBand, useWorkoutControl, controlKey } from './control/climb';
-import { ClimbFeel } from './control/climb-feel';
 import { useLiveFeed, type LiveNow, type RecentPower } from './hooks/feed';
 import { useStored } from './hooks/stored';
 import { useArmed, useEvent } from './hooks/hooks';
@@ -29,15 +32,15 @@ import { RideReview } from './review/review-panel';
 import { TimeInZone } from './review/zones';
 import { PastRides } from './past/past-rides';
 import { LEVELS, PROFILE_SOURCE, fmtWkg, levelOf, wkgOf, type ProfileSex } from './util/profile';
-import { useRoute, RIDES_HASH } from './hooks/route';
-import { FtpTestBand, FtpTestSettings, protocolWorkout, startFtpTest, type FtpTestSettingsProps } from './ftp/ftp';
+import { useRoute, goLive, type Route } from './hooks/route';
+import { Nav, PageHead } from './nav/nav';
+import { Train } from './train/train';
+import { FtpTestBand, protocolWorkout, startFtpTest } from './ftp/ftp';
 import type { DeviceChoice, DeviceKind, DeviceRole, FoundDevice, HrState, HrStatus, LiveValues, RideState,
-  RideStatus, Sample, ScanStatus, SimSettings, Status, TrainerState } from './types/feed';
+  RideStatus, Sample, ScanStatus, Status, TrainerState } from './types/feed';
 import type { Workout } from './types/workout';
-import type { WorkoutSettingsProps } from './workout/workout';
 
 type Mode = RideState;                   // what the page shows: ready (preview), recording, finished
-type Panel = 'devices' | 'settings';
 type LiveRate = 'auto' | 'fast' | 'saver';
 // Which Download / Send buttons were used, for which .fit
 interface Sent { fit: string | null; to: string[] }
@@ -105,23 +108,23 @@ interface Actions {
   lap: () => void; finish: () => void; start: () => void; pause: () => void;
 }
 interface HeaderProps {
-  status: Partial<Status>; ride: Partial<RideStatus>; act: Actions; panel: Panel | null; toggle: (p: Panel) => void;
+  status: Partial<Status>; ride: Partial<RideStatus>; act: Actions; page: Route; onNavigate: () => void;
 }
-export function Header({ status, ride, act, panel, toggle }: HeaderProps) {
-  const settingsOpen = panel === 'settings', devicesOpen = panel === 'devices';
+export function Header({ status, ride, act, page, onNavigate }: HeaderProps) {
+  const devicesOpen = page === 'devices';
   const recording = ride.state === 'recording';
   const [col, txt, short] = (status.state && STATUS[status.state]) || ['--text-muted', () => status.state || 'Connecting…', 'Connecting…'];
   const hr: Partial<HrStatus> = status.hr || {};
   const hrPill = hr.state && HR_STATUS[hr.state];
   return (
     <header>
-      <h1><Logo />Bike <span>Live training</span></h1>
-      <button className={'pills' + (devicesOpen ? ' on' : '')} onClick={() => toggle('devices')}
-              aria-expanded={devicesOpen} aria-controls="devices" title="Choose the trainer and heart-rate device">
+      <h1><a className="home" href="#" onClick={onNavigate} aria-label="Bike, Live training: go to Live"><Logo />Bike <span>Live training</span></a></h1>
+      <a className={'pills' + (devicesOpen ? ' on' : '')} href="#devices" onClick={onNavigate}
+         title="Choose the trainer and heart-rate device">
         <Pill col={col} long={txt(status)} short={short} />
         {hrPill && <Pill col={hrPill[0]} long={hrPill[1](hr)} short={hrPill[2]} />}
-        <span className="pills-act">Devices</span>
-      </button>
+        <span className="sr-only">Open Devices</span>
+      </a>
       <div className="controls">
         {recording ? <>
           <button className="primary lap" onClick={act.lap} aria-keyshortcuts="L">Lap <Kbd k="L" /></button>
@@ -132,34 +135,8 @@ export function Header({ status, ride, act, panel, toggle }: HeaderProps) {
         </> : <button className={armedCls(act.startArmed, 'start')} onClick={act.start} aria-keyshortcuts="S">
           {act.startArmed ? `${PRESS} again to start` : <>{ride.state === 'finished' ? 'Start new ride' : 'Start'} <Kbd k="S" /></>}
         </button>}
-        <button className={'quiet settings-btn' + (settingsOpen ? ' on' : '')} onClick={() => toggle('settings')}
-                aria-expanded={settingsOpen} aria-controls="settings">Settings</button>
       </div>
     </header>
-  );
-}
-
-// ------------------------------------------------------------------ drawer: Devices or Settings, one at a time
-// Floats over the page instead of pushing it down, so the live numbers never move mid-ride.
-// Not a modal: the page behind keeps updating and stays usable. Esc or Close puts focus back.
-function Drawer({ id, title, onClose, wide, children }: { id: string; title: string; onClose: () => void; wide?: boolean; children: ReactNode }) {
-  const ref = useRef<HTMLElement>(null);
-  const close = useEvent(onClose);
-  useEffect(() => {      // focus moves in while open and back out on close; Esc works anywhere on the page
-    const back = document.activeElement as HTMLElement | null;
-    ref.current?.focus();
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('keydown', k);
-    return () => { document.removeEventListener('keydown', k); if (back && back.focus) back.focus(); };
-  }, [close]);
-  return (
-    <aside className={'drawer' + (wide ? ' wide' : '')} id={id} aria-label={title} tabIndex={-1} ref={ref}>
-      <div className="drawer-head">
-        <h2>{title}</h2>
-        <button className="quiet" onClick={onClose}>Close <Kbd k="Esc" /></button>
-      </div>
-      {children}
-    </aside>
   );
 }
 
@@ -228,80 +205,79 @@ interface SettingsProps {
   ftp: number; setFtp: (v: number) => void; kg: number | null; setKg: (v: number | null) => void;
   sex: ProfileSex; setSex: (v: ProfileSex) => void;
   onCsv: () => void; canCsv: boolean; smooth: number; setSmooth: (v: number) => void;
-  liveRate: LiveRate; setLiveRate: (v: LiveRate) => void; recording: boolean; workout: WorkoutSettingsProps;
-  ftpTest?: FtpTestSettingsProps; sim?: SimSettings;
+  liveRate: LiveRate; setLiveRate: (v: LiveRate) => void; recording: boolean;
 }
-export function Settings({ ftp, setFtp, kg, setKg, sex, setSex, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout, ftpTest, sim }: SettingsProps) {
+// Grouped by what the rider is changing: about you, how the live numbers look, the data on disk.
+// The workout, FTP test and Climb feel are on the Training page (train/train.tsx).
+export function Settings({ ftp, setFtp, kg, setKg, sex, setSex, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording }: SettingsProps) {
   return (
-    <section className="settings">
-      <FtpField key={ftp} ftp={ftp} setFtp={setFtp} />
-      {ftpTest && <div className="field">
-        <span className="flabel">FTP test</span>
-        <FtpTestSettings {...ftpTest} />
-      </div>}
-      <WeightField key={kg ?? ''} kg={kg} setKg={setKg} ftp={ftp} sex={sex} />
-      <div className="field">
-        <label htmlFor="profile-sex">Power profile</label>
-        <div className="inline">
-          <select id="profile-sex" value={sex} onChange={e => setSex(e.target.value as ProfileSex)}>
-            <option value="m">Men&apos;s table</option>
-            <option value="f">Women&apos;s table</option>
-          </select>
+    <section className="page" aria-labelledby="settings-h">
+      <PageHead id="settings-h" title="Settings" />
+      <section className="settings" aria-labelledby="set-you">
+        <h3 id="set-you">You</h3>
+        <FtpField key={ftp} ftp={ftp} setFtp={setFtp} />
+        <WeightField key={kg ?? ''} kg={kg} setKg={setKg} ftp={ftp} sex={sex} />
+        <div className="field">
+          <label htmlFor="profile-sex">Power profile</label>
+          <div className="inline">
+            <select id="profile-sex" value={sex} onChange={e => setSex(e.target.value as ProfileSex)}>
+              <option value="m">Men&apos;s table</option>
+              <option value="f">Women&apos;s table</option>
+            </select>
+          </div>
+          <p className="help">Which of Coggan&apos;s tables rates your W/kg, from {LEVELS[LEVELS.length - 1]} to {LEVELS[0]}.</p>
         </div>
-        <p className="help">Which of Coggan&apos;s tables rates your W/kg, from {LEVELS[LEVELS.length - 1]} to {LEVELS[0]}.</p>
-      </div>
-      {sim && <ClimbFeel sim={sim} />}
-      <div className="field">
-        <label htmlFor="smooth">Power number</label>
-        <div className="inline">
-          <select id="smooth" value={smooth} onChange={e => setSmooth(+e.target.value)}>
-            <option value={0}>Instant</option>
-            <option value={3}>3 s average</option>
-            <option value={5}>5 s average</option>
-          </select>
+      </section>
+      <section className="settings" aria-labelledby="set-live">
+        <h3 id="set-live">Live numbers</h3>
+        <div className="field">
+          <label htmlFor="smooth">Power number</label>
+          <div className="inline">
+            <select id="smooth" value={smooth} onChange={e => setSmooth(+e.target.value)}>
+              <option value={0}>Instant</option>
+              <option value={3}>3 s average</option>
+              <option value={5}>5 s average</option>
+            </select>
+          </div>
+          <p className="help">Instant shows each reading from the trainer. Averages are steadier.</p>
         </div>
-        <p className="help">Instant shows each reading from the trainer. Averages are steadier.</p>
-      </div>
-      <div className="field">
-        <label htmlFor="liverate">Live updates</label>
-        <div className="inline">
-          <select id="liverate" value={liveRate} onChange={e => setLiveRate(e.target.value as LiveRate)}>
-            <option value="auto">Automatic</option>
-            <option value="fast">Instant</option>
-            <option value="saver">Battery saver (2 per second)</option>
-          </select>
+        <div className="field">
+          <label htmlFor="liverate">Live updates</label>
+          <div className="inline">
+            <select id="liverate" value={liveRate} onChange={e => setLiveRate(e.target.value as LiveRate)}>
+              <option value="auto">Automatic</option>
+              <option value="fast">Instant</option>
+              <option value="saver">Battery saver (2 per second)</option>
+            </select>
+          </div>
+          <p className="help">Automatic is instant on a computer and battery saver on a phone or tablet.</p>
         </div>
-        <p className="help">Automatic is instant on a computer and battery saver on a phone or tablet.</p>
-      </div>
-      <div className="field">
-        <span className="flabel">Workout</span>
-        <WorkoutSettings {...workout} />
-      </div>
-      <div className="field">
-        <span className="flabel">This ride</span>
-        <div className="inline"><button onClick={onCsv} disabled={!canCsv}>Export CSV</button></div>
-        <p className="help">The logger also writes a CSV and a .FIT file to its ride folder.</p>
-      </div>
-      <div className="field">
-        <span className="flabel">Past rides</span>
-        <div className="inline"><a className="btn" href={RIDES_HASH}>Past rides</a></div>
-        <p className="help">Pick one of your last 10 Garmin rides, or a .fit, .tcx, .gpx or CSV file, and get its review.</p>
-      </div>
-      <div className="field">
-        <span className="flabel">Clear data</span>
-        <ClearData recording={recording} />
-      </div>
-      <div className="field">
-        <span className="flabel">Logger</span>
-        <StopLogger />
-      </div>
-      <div className="field wide">
-        <span className="flabel">Tips</span>
-        <p className="help">Garmin watch heart rate: turn on <b>Broadcast Heart Rate</b> on the watch.
-          Close Zwift and the ThinkRider app first: the trainer and the watch accept one connection at a time.
-          <span className="keys"> Keys: <Kbd k="S" /> start, <Kbd k="L" /> lap, <Kbd k="P" /> pause / resume, <Kbd k="F" /> twice to finish,
-          <Kbd k="−" /> <Kbd k="+" /> grade (Trainer control on).</span></p>
-      </div>
+      </section>
+      <section className="settings" aria-labelledby="set-data">
+        <h3 id="set-data">Ride data and logger</h3>
+        <div className="field">
+          <span className="flabel">This ride</span>
+          <div className="inline"><button onClick={onCsv} disabled={!canCsv}>Export CSV</button></div>
+          <p className="help">The logger also writes a CSV and a .FIT file to its ride folder.</p>
+        </div>
+        <div className="field">
+          <span className="flabel">Clear data</span>
+          <ClearData recording={recording} />
+        </div>
+        <div className="field">
+          <span className="flabel">Logger</span>
+          <StopLogger />
+        </div>
+      </section>
+      <section className="settings" aria-labelledby="set-tips">
+        <h3 id="set-tips">Tips</h3>
+        <div className="field wide">
+          <p className="help">Garmin watch heart rate: turn on <b>Broadcast Heart Rate</b> on the watch.
+            Close Zwift and the ThinkRider app first: the trainer and the watch accept one connection at a time.
+            <span className="keys"> Keys, on any page: <Kbd k="S" /> start, <Kbd k="L" /> lap, <Kbd k="P" /> pause / resume, <Kbd k="F" /> twice to finish,
+            <Kbd k="−" /> <Kbd k="+" /> grade (Trainer control on).</span></p>
+        </div>
+      </section>
     </section>
   );
 }
@@ -406,7 +382,7 @@ export function Devices({ status, recording }: { status: Partial<Status>; record
   const scan: Partial<ScanStatus> = status.scan || {};
   const choice = status.devices || {};
   const [showOther, setShowOther] = useState(false);
-  useEffect(() => { post('/devices/scan'); }, []);   // a short Bluetooth scan while the panel is open (it mounts on open)
+  useEffect(() => { post('/devices/scan'); }, []);   // a short Bluetooth scan while the page is open (it mounts on open)
   const scanning = scan.state === 'scanning';
   const found = scan.found || [];
   const main = found.filter(d => d.kind !== 'other'), other = found.filter(d => d.kind === 'other');
@@ -418,7 +394,7 @@ export function Devices({ status, recording }: { status: Partial<Status>; record
       </div>
       <div className="nearby">
         <div className="head">
-          <h2>Nearby</h2>
+          <h3>Nearby</h3>
           <button onClick={() => post('/devices/scan')} disabled={scanning}>{scanning ? 'Scanning…' : 'Scan again'}</button>
         </div>
         <ul aria-busy={scanning}>
@@ -646,10 +622,7 @@ export function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownloa
   } else {
     body = <><span className="badge">Preview</span>
       <span>Live numbers only. Nothing is saved until you press <b>Start</b>.</span>
-      <span className="strip-acts">
-        <a className="btn quiet" href={RIDES_HASH}>Past rides</a>
-        {onFtpTest && <button onClick={onFtpTest}>Start FTP test</button>}
-      </span></>;
+      {onFtpTest && <span className="strip-acts"><button onClick={onFtpTest}>Start FTP test</button></span>}</>;
   }
   return <div className={'strip ' + cls} role="status" aria-live="polite">{body}</div>;
 }
@@ -689,23 +662,23 @@ export function App() {
   const [woSound, setWoSound] = useStored('workoutSound', true);
   const [sent, setSent] = useStored<Sent | null>('sent', NOT_SENT);   // which buttons were used for which .fit
 
-  const [panel, setPanel] = useState<Panel | null>(null);
-  const toggle = (p: Panel) => setPanel(o => (o === p ? null : p));
-  const closePanel = useCallback(() => setPanel(null), []);
-  // Adjusted while rendering, when the logger's answer arrives (no effect, no extra paint):
-  // open the device panel once when no trainer is remembered yet (or it was turned off) ...
+  // The page is the URL hash, except on first start: with no trainer remembered yet (or its search
+  // turned off) Devices shows in place of Live until a tab is pressed, the hash changes or a ride
+  // starts. Adjusted while rendering, when the logger's answer arrives (no effect, no extra paint).
+  const [autoDevices, setAutoDevices] = useState(false);
   const devChoice = status.devices?.trainer;
   const [askedDevices, setAskedDevices] = useState(false);
   if (devChoice && !askedDevices) {
     setAskedDevices(true);
-    if (devChoice.mode !== 'device' && mode !== 'recording') setPanel('devices');
+    if (devChoice.mode !== 'device' && mode !== 'recording') setAutoDevices(true);
   }
-  // ... and close the panels when a ride starts, so the numbers are clear.
   const [prevMode, setPrevMode] = useState(mode);
   if (prevMode !== mode) {
     setPrevMode(mode);
-    if (mode === 'recording') setPanel(null);
+    if (mode === 'recording') setAutoDevices(false);
   }
+  const page: Route = autoDevices && route === 'live' ? 'devices' : route;
+  const onNavigate = () => setAutoDevices(false);
   const [finishArmed, pressFinish] = useArmed(ride.state);
   const [startArmed, pressStart] = useArmed(ride.state);
   const [testArmed, pressTest] = useArmed(ride.state);
@@ -733,7 +706,7 @@ export function App() {
     pause: () => post(`/pause?on=${paused ? 0 : 1}`),
     finish: () => pressFinish(() => post('/finish')),
     start: () => {
-      if (route === 'rides') window.location.hash = '';   // a new ride: back to the live numbers
+      setAutoDevices(false); goLive();                  // a new ride: back to the live numbers
       const start = () => post(`/start${kg ? `?kg=${kg}` : ''}`);
       return unsaved ? pressStart(start) : start();
     },
@@ -741,7 +714,10 @@ export function App() {
   // FTP test: the logger runs it as a ride; while it is on, its steps replace the loaded workout.
   const ftpStatus = status.ftp;
   const ftpRun = ftpStatus?.test ?? null;
-  const startTest = () => unsaved ? pressTest(() => startFtpTest(ftp, kg)) : startFtpTest(ftp, kg);
+  const startTest = () => {
+    const go = () => { setAutoDevices(false); goLive(); startFtpTest(ftp, kg); };
+    return unsaved ? pressTest(go) : go();
+  };
   const testWo = useMemo(() => (ftpStatus ? protocolWorkout(ftpStatus.protocol) : null), [ftpStatus?.protocol]); // eslint-disable-line react-hooks/exhaustive-deps
   const testing = !!ftpRun && mode === 'recording';
   const activeWo = testing ? testWo : wo;
@@ -755,10 +731,10 @@ export function App() {
                  : activeWo && ctl && ctl.mode === 'erg' ? 'The workout sets the power at each step.' : null;
   const showCtl = ctl && (status.connected || ctl.enabled || ctl.msg);
 
-  // Keys: S start, L lap, F finish, − / + grade or ERG power. One document listener for the
-  // app's lifetime; useEvent lets it see the current ride and control state.
+  // Keys: S start, L lap, F finish, − / + grade or ERG power, on every page. One document listener
+  // for the app's lifetime; useEvent lets it see the current ride and control state.
   const onKey = useEvent((e: KeyboardEvent) => {
-    if (route === 'rides' || e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
+    if (e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
     const key = e.key.toLowerCase();
     if (key === 'l' && mode === 'recording') act.lap();
     else if (key === 'f' && mode === 'recording') act.finish();
@@ -783,17 +759,22 @@ export function App() {
 
   return (
     <div className="wrap">
-      <Header status={status} ride={ride} act={act} panel={panel} toggle={toggle} />
-      {panel === 'devices' && <Drawer id="devices" title="Devices" onClose={closePanel}>
-        <Devices status={status} recording={mode === 'recording'} /></Drawer>}
-      {panel === 'settings' && <Drawer id="settings" title="Settings" onClose={closePanel}><Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} sex={sex} setSex={setSex} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
-                                 onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} recording={mode === 'recording'}
-                                 workout={{ wo, setWo, sound: woSound, setSound: setWoSound }}
-                                 ftpTest={{ ftpStatus, ftp, setFtp, recording: mode === 'recording', startArmed: testArmed, onStart: startTest }}
-                                 sim={online ? ctl?.sim : undefined} /></Drawer>}
+      <Header status={status} ride={ride} act={act} page={page} onNavigate={onNavigate} />
+      <Nav page={page} recording={mode === 'recording'} paused={paused} seconds={hist.length} onNavigate={onNavigate} />
       {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
-      {route === 'rides' ? <PastRides rider={{ ftp, kg, sex }} coach={online ? status.coach : undefined} /> : <>
+      {page === 'train' ? <Train workout={{ wo, setWo, sound: woSound, setSound: setWoSound }}
+                                 ftpTest={{ ftpStatus, ftp, setFtp, recording: mode === 'recording', startArmed: testArmed, onStart: startTest }}
+                                 sim={online ? ctl?.sim : undefined} />
+      : page === 'rides' ? <PastRides rider={{ ftp, kg, sex }} coach={online ? status.coach : undefined} />
+      : page === 'devices' ? <section className="page" aria-labelledby="devices-h">
+          <PageHead id="devices-h" title="Devices">The trainer and a heart-rate source. Close Zwift and the ThinkRider app first: each device takes one connection at a time.</PageHead>
+          <Devices status={status} recording={mode === 'recording'} />
+        </section>
+      : page === 'settings' ? <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} sex={sex} setSex={setSex} smooth={smooth} setSmooth={setSmooth}
+                                        liveRate={liveRate} setLiveRate={setLiveRate} onCsv={() => exportCsv(hist)} canCsv={hist.length > 0}
+                                        recording={mode === 'recording'} />
+      : <>
       <RideStrip ride={ride} seconds={hist.length} startArmed={startArmed} lapFlash={lapFlash}
                  sent={sent || NOT_SENT} onDownload={markSent} ftpTest={testing}
                  onFtpTest={ftpStatus && online ? startTest : undefined} />

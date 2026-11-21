@@ -44,14 +44,15 @@ code { font-size: .92em; color: var(--text-secondary); }
 /* ---------------- header: identity, status, ride actions */
 header { display: flex; align-items: center; gap: 12px 16px; flex-wrap: wrap; margin-bottom: 12px; }
 header h1 { font-size: 18px; font-weight: 650; margin: 0; display: flex; align-items: center; }
+header h1 .home { display: flex; align-items: center; color: inherit; text-decoration: none; border-radius: 8px;
+                 min-height: var(--tap); padding: 0 6px; margin-left: -6px; }
+@media (hover: hover) { header h1 .home:hover { background: var(--surface-1); } }
 header h1 .logo { width: 28px; height: 24px; margin-right: 8px; flex: none; }
 header h1 span { font-weight: 500; color: var(--text-secondary); margin-left: 4px; }
-.pills { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; background: none; border: 1px solid transparent;
+.pills { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; background: none; color: inherit; text-decoration: none; border: 1px solid transparent;
          border-radius: 999px; padding: 2px; min-height: var(--tap); cursor: pointer; text-align: left; white-space: normal; }
 .pills:hover { border-color: var(--border); }
 .pills.on { border-color: var(--text-muted); }
-.pills-act { font-size: 13px; color: var(--text-secondary); padding: 0 8px 0 2px; text-decoration: underline;
-             text-decoration-color: var(--text-muted); text-underline-offset: 3px; }
 .pill { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; min-height: 30px;
         border-radius: 999px; background: var(--surface-2); font-size: 13px;
         color: var(--text-secondary); border: 1px solid var(--border); }
@@ -94,15 +95,29 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 input::placeholder { color: var(--text-muted); }
 input[aria-invalid=true] { border-color: var(--critical); }
 
-/* ---------------- drawer: Devices or Settings over the right edge, the page keeps its place */
-.drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 60; width: min(520px, 100vw); overflow-y: auto;
-          overscroll-behavior: contain; background: var(--surface-1); border-left: 1px solid var(--border);
-          box-shadow: -16px 0 40px rgba(0, 0, 0, .5); padding: 14px 18px 24px; }
-.drawer:focus { outline: none; }
-.drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.drawer-head h2 { font-size: 16px; font-weight: 650; margin: 0; }
-.drawer .settings, .drawer .devices { grid-template-columns: minmax(0, 1fr); background: none; border: 0;
-                                      border-radius: 0; padding: 0; margin: 0; }
+/* ---------------- page tabs: one row under the header on every screen; the active page is
+   underlined in the power blue, a recording ride puts a red dot (and its time) on Live */
+.nav { margin: 0 0 16px; }
+.nav ul { display: flex; gap: 2px; list-style: none; margin: 0; padding: 0; overflow-x: auto; scrollbar-width: none;
+          box-shadow: inset 0 -1px 0 var(--border); }
+.nav ul::-webkit-scrollbar { display: none; }
+.nav a { display: inline-flex; align-items: center; gap: 8px; min-height: var(--tap); padding: 0 14px;
+         font-size: 14px; font-weight: 500; color: var(--text-muted); text-decoration: none; white-space: nowrap;
+         border-bottom: 2px solid transparent; border-radius: 8px 8px 0 0; }
+@media (hover: hover) { .nav a:hover { color: var(--text-primary); background: var(--surface-1); } }
+.nav a:focus-visible { outline-offset: -2px; }
+.nav a[aria-current=page] { color: var(--text-primary); font-weight: 600; border-bottom-color: var(--power); }
+.nav-rec { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--critical); }
+.nav-rec.paused { background: var(--warning); }
+.nav-time { font-size: 13px; color: var(--rec-text); font-variant-numeric: tabular-nums; }
+
+/* ---------------- pages behind the tabs (Training, Past rides, Devices, Settings) */
+.page { display: flex; flex-direction: column; gap: 14px; }
+.page:not(.past) { max-width: 980px; }
+.page-head h2 { font-size: 20px; font-weight: 650; margin: 0; }
+.page-head .help { margin-top: 4px; }
+.page > .settings, .page > .devices { margin: 0; }
+.settings > h3 { grid-column: 1 / -1; margin: 0 0 -4px; font-size: 15px; font-weight: 650; }
 
 /* ---------------- settings */
 .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px 24px;
@@ -136,7 +151,7 @@ input[aria-invalid=true] { border-color: var(--critical); }
 .slot-dev b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nearby { min-width: 0; }
 .nearby .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.nearby h2 { font-size: 14px; font-weight: 600; margin: 0; color: var(--text-secondary); }
+.nearby h3 { font-size: 14px; font-weight: 600; margin: 0; color: var(--text-secondary); }
 .nearby ul { list-style: none; margin: 8px 0 0; padding: 0; }
 .nearby li { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--grid); min-width: 0; }
 .nearby .dname { display: flex; flex-direction: column; flex: 1; min-width: 0; font-size: 14px; font-weight: 600;
@@ -312,16 +327,16 @@ td .now { font-size: 11px; font-weight: 600; color: var(--rec-text); margin-left
               background: var(--page); border-top: 1px solid var(--border); }
   .wrap { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
   .wo-pop { bottom: calc(84px + env(safe-area-inset-bottom)); }
-  /* Lap (or Start) wide on the left, Finish small on the far right, Settings between them,
+  /* Lap (or Start) wide on the left, Finish small on the far right,
      so a hurried thumb on Lap never lands on Finish */
   .controls > button.lap, .controls > button.start { flex: 1; }
-  .controls > .settings-btn { order: 2; }
   .controls > button.finish { order: 3; margin-left: 8px; }
   header .controls button.finish { min-width: 0; }
-  .drawer { top: auto; left: 0; right: 0; width: auto; bottom: calc(65px + env(safe-area-inset-bottom));
-            max-height: calc(100dvh - 140px); border-left: 0; border-top: 1px solid var(--border);
-            border-radius: 16px 16px 0 0; box-shadow: 0 -16px 40px rgba(0, 0, 0, .5); padding: 12px 14px 20px; }
   .devices { padding: 12px; }
+  .nav { margin-bottom: 12px; }
+  .nav li { flex: 1 0 auto; }
+  .nav a { width: 100%; justify-content: center; padding: 0 8px; font-size: 13px; gap: 6px; }
+  .nav-time { display: none; }
   .hero, .stats { gap: 8px; }
   .tile { padding: 12px; }
   .hero .value { font-size: 46px; }
@@ -507,8 +522,7 @@ td .now { font-size: 11px; font-weight: 600; color: var(--rec-text); margin-left
   .review .rv-nums dd { font-size: 20px; }
 }
 
-/* ---------------- review a ride file (drawer) */
-.drawer.wide { width: min(820px, 100vw); }
+/* ---------------- review a ride file */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 label.btn:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
 label.btn.primary { background: var(--action); border-color: var(--action); color: #fff; font-weight: 600; }
@@ -546,9 +560,6 @@ label.btn.primary { background: var(--action); border-color: var(--action); colo
 .coach .co-next p { color: var(--text-primary); }
 
 /* Past rides page (#rides): Garmin list on the left, the picked ride's review on the right */
-.past { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
-.past-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.past-head h2 { font-size: 20px; margin: 0; }
 .past-grid { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 14px; align-items: start; }
 .past-list { display: flex; flex-direction: column; gap: 12px; }
 .pl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

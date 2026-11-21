@@ -6,6 +6,7 @@ import { useRef, useState } from 'react';
 import type { CoachStatus, GarminRide } from '../types/coach';
 import { FileResult, ReviewFile, type Rider } from '../import/review-file';
 import { parseFit, toRide, type RideFile } from '../import/ridefile';
+import { PageHead } from '../nav/nav';
 
 export interface ListedRide extends GarminRide { id: number; distance_km: number | null; avg_hr: number | null }
 type List = { state: 'idle' } | { state: 'loading' } | { state: 'error'; msg: string } | { state: 'done'; rides: ListedRide[] };
@@ -49,11 +50,8 @@ export function PastRides({ rider, coach }: { rider: Rider; coach?: CoachStatus 
   };
 
   return (
-    <section className="past" aria-labelledby="past-h">
-      <div className="past-head">
-        <h2 id="past-h">Past rides</h2>
-        <a className="btn quiet" href="#">Back to the live dashboard</a>
-      </div>
+    <section className="page past" aria-labelledby="past-h">
+      <PageHead id="past-h" title="Past rides">Your last 10 Garmin rides, or a ride file from this computer, with its review.</PageHead>
       <div className="past-grid">
         <div className="panel past-list">
           <div className="pl-head">

@@ -15,6 +15,12 @@ vi.mock('../../src/charts/charts', () => ({ Charts: () => <div data-testid="char
 
 const posted = () => vi.mocked(fetch).mock.calls.map(c => c[0]);
 
+// Press a tab in the page bar; jsdom moves the hash like a browser.
+async function openPage(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(within(screen.getByRole('navigation', { name: 'Pages' })).getByRole('link', { name: new RegExp(`^${name}`) }));
+  await act(async () => { window.dispatchEvent(new HashChangeEvent('hashchange')); });
+}
+
 async function renderApp(st: Status = status(), history = ride([])) {
   vi.resetModules();                                // fresh feed and settings stores
   const { App } = await import('../../src/app');
@@ -82,7 +88,7 @@ describe('Start and Finish', () => {
 
   it('keys typed into a field are not shortcuts', async () => {
     const user = await renderApp();
-    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    await openPage(user, 'Settings');
     await user.type(screen.getByLabelText('Weight'), 's');
     expect(posted()).not.toContain('/start');
   });
@@ -112,12 +118,27 @@ describe('recording', () => {
     expect(screen.getByText('Lap 2 started')).toBeInTheDocument();
   });
 
-  it('starting a ride closes an open panel', async () => {
+  it('Start on another page goes back to the live numbers', async () => {
     const user = await renderApp();
-    await user.click(screen.getByRole('button', { name: 'Settings' }));
-    expect(screen.getByRole('complementary', { name: 'Settings' })).toBeInTheDocument();
-    latestStream().emit('status', recording());
-    expect(screen.queryByRole('complementary', { name: 'Settings' })).not.toBeInTheDocument();
+    await openPage(user, 'Settings');
+    expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^Start/ }));
+    await act(async () => { window.dispatchEvent(new HashChangeEvent('hashchange')); });
+    expect(window.location.hash).toBe('');
+    expect(screen.getByTestId('charts')).toBeInTheDocument();
+    expect(posted()).toContain('/start');
+  });
+
+  it('a ride keeps recording on other pages: Live shows the time, the ride keys still work', async () => {
+    const user = await renderApp(recording(), ride(Array(75).fill(250)));
+    await openPage(user, 'Past rides');
+    expect(screen.queryByTestId('charts')).not.toBeInTheDocument();
+    const live = within(screen.getByRole('navigation', { name: 'Pages' })).getByRole('link', { name: /^Live/ });
+    expect(live).toHaveTextContent('1:15');
+    expect(live).toHaveAccessibleName(/recording/);
+    await user.keyboard('l');
+    expect(posted()).toContain('/lap');
+    expect(screen.getByRole('button', { name: /^Finish/ })).toBeInTheDocument();
   });
 });
 
@@ -322,10 +343,11 @@ describe('Past rides page', () => {
   it('is linked from the ready screen and swaps the live dashboard out', async () => {
     await renderApp();
     expect(screen.getByRole('link', { name: 'Past rides' })).toHaveAttribute('href', '#rides');
+    expect(screen.getByRole('link', { name: 'Live' })).toHaveAttribute('aria-current', 'page');
     act(() => { window.location.hash = '#rides'; window.dispatchEvent(new HashChangeEvent('hashchange')); });
     expect(screen.getByRole('heading', { name: 'Past rides' })).toBeInTheDocument();
     expect(screen.queryByTestId('charts')).not.toBeInTheDocument();
-    act(() => { window.location.hash = ''; window.dispatchEvent(new HashChangeEvent('hashchange')); });
+    await act(async () => { window.location.hash = ''; window.dispatchEvent(new HashChangeEvent('hashchange')); });
     expect(screen.getByTestId('charts')).toBeInTheDocument();
   });
 
@@ -374,13 +396,30 @@ describe('connection', () => {
 
   it('opens Devices on first start (no trainer remembered)', async () => {
     await renderApp(status({ devices: { trainer: { mode: 'auto' }, hr: { mode: 'auto' } } }));
-    expect(screen.getByRole('complementary', { name: 'Devices' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Devices' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Devices' })).toHaveAttribute('aria-current', 'page');
     expect(posted()).toContain('/devices/scan');
+  });
+
+  it('the logo goes back to Live', async () => {
+    const user = await renderApp();
+    await openPage(user, 'Settings');
+    await user.click(screen.getByRole('link', { name: /go to Live/ }));
+    await act(async () => { window.dispatchEvent(new HashChangeEvent('hashchange')); });
+    expect(screen.getByTestId('charts')).toBeInTheDocument();
+  });
+
+  it('first-start Devices gives way when Live is pressed', async () => {
+    const user = await renderApp(status({ devices: { trainer: { mode: 'auto' }, hr: { mode: 'auto' } } }));
+    await openPage(user, 'Live');
+    expect(screen.queryByRole('heading', { name: 'Devices' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('charts')).toBeInTheDocument();
   });
 
   it('header pills show trainer and heart-rate state', async () => {
     await renderApp(status({ state: 'reconnecting', hr: { state: 'searching', device: null } }));
-    const pills = screen.getByRole('button', { name: /Devices/ });
+    const pills = screen.getByRole('link', { name: /Open Devices/ });
+    expect(pills).toHaveAttribute('href', '#devices');
     expect(pills).toHaveTextContent('Trainer lost · reconnecting (timer paused)');
     expect(pills).toHaveTextContent('HR · looking for watch or strap');
   });
