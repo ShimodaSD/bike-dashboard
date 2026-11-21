@@ -6,7 +6,8 @@ smart trainer) and watch a live training dashboard in your browser.
 ## Folders
 
 ```
-Start X2Max.command   double-click to start (macOS)
+Start X2Max.command   double-click to start (macOS); Start X2Max demo.command: no trainer
+scripts/              start.sh: update, install, build if needed, then start the logger
 logger/               thinkrider_logger.py: Bluetooth, recording, .FIT, web server
                       trainer_control.py: climb simulation / ERG over FTMS (off by default)
                       ftp_test.py: the guided FTP test and its saved results
@@ -33,14 +34,35 @@ New code goes in the folder it belongs to; a new dashboard feature gets its own 
 
 ## Run it
 
-Needs [uv](https://docs.astral.sh/uv/). `uv run` creates the virtual environment and
-installs `bleak` from `pyproject.toml` / `uv.lock` on first use.
+You need [uv](https://docs.astral.sh/uv/) (and [pnpm](https://pnpm.io/) only if you change the
+dashboard's code).
 
-**On macOS, no typing needed:** double-click **`Start X2Max.command`** in Finder. It starts
-the logger and opens the dashboard. A Terminal window shows the log; leave it open. To
-stop, use **Settings > Stop logger** or close that window (a ride in progress is saved
-either way). To also open the dashboard on your phone, edit the file and set
-`EXTRA_ARGS="--host 0.0.0.0"`. If Finder says it can't be opened, right-click it > Open once.
+| | macOS, no typing | Terminal (macOS / Linux) |
+|---|---|---|
+| Ride with the trainer | double-click **`Start X2Max.command`** | `scripts/start.sh` |
+| Try it without the trainer | double-click **`Start X2Max demo.command`** | `scripts/start.sh --demo` |
+| Also on your phone (same Wi-Fi) | set `EXTRA_ARGS="--phone"` in `Start X2Max.command` | `scripts/start.sh --phone` |
+
+Each of these:
+
+1. **gets the latest code** (`git pull`, only on `main` with no local changes; `--no-update` skips it),
+2. **installs the Python packages** (`uv sync`),
+3. **rebuilds the dashboard** if you changed `dashboard/src` (with pnpm; `--rebuild` forces it),
+4. **tells you which optional features are off** because a key is missing from `.env`
+   ([Ask Claude and Garmin](#dashboard)),
+5. **starts the logger on a free port** and opens the dashboard in your browser.
+
+The dashboard is on http://localhost:8000. If another program already uses port 8000 (a Docker
+container, say, which shows `{"detail":"Not Found"}`), the logger takes the next free port and
+prints it: `Dashboard: http://localhost:8001`. Settings saved in the browser (FTP, weight,
+workout) belong to the address, so they start fresh on a new port.
+
+A Terminal window shows the log; leave it open. To stop, use **Settings > Stop logger**, close
+the window or press Ctrl+C (a ride in progress is saved either way). If Finder says a
+`.command` file can't be opened, right-click it > Open once.
+
+Any other option goes straight to the logger (`scripts/start.sh --help` lists them all), and
+`uv run logger/thinkrider_logger.py` still works on its own if you'd rather skip the checks.
 
 ## Pick your trainer and heart-rate device
 
@@ -128,7 +150,7 @@ Garmin: Import Data). There is no automatic upload: Strava's API needs a paid su
 
 ## Dashboard
 
-`dashboard/dashboard.html` is served by the script at http://localhost:8000. It shows power
+`dashboard/dashboard.html` is served by the script at http://localhost:8000 (or the next free port). It shows power
 (3 s), cadence, speed, heart rate, power zones, NP / IF / TSS, W/kg, laps and live
 power / cadence / HR / speed charts. While recording it shows a red REC strip and frame;
 after Finish it shows the ride's summary and a **Ride review**: what kind of ride it was
