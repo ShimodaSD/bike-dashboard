@@ -82,7 +82,7 @@ button.strava, a.btn.strava { background: var(--strava); border-color: var(--str
 /* a Download / Send button already used for this ride */
 a.btn.used { color: var(--done-text); border-color: #2c5a25; background: transparent; }
 .check { flex: none; }
-button.quiet { background: none; color: var(--text-secondary); }
+button.quiet, a.btn.quiet { background: none; color: var(--text-secondary); }
 button.quiet.on { background: var(--surface-2); color: var(--text-primary); }
 header .controls button { min-width: 88px; }
 /* full-strength text (readable on the coloured buttons), only the outline is softened */
@@ -526,3 +526,25 @@ label.btn.primary { background: var(--action); border-color: var(--action); colo
 .coach ul { padding-left: 18px; }
 .coach li + li { margin-top: 3px; }
 .coach .co-next p { color: var(--text-primary); }
+
+/* Past rides page (#rides): Garmin list on the left, the picked ride's review on the right */
+.past { display: flex; flex-direction: column; gap: 14px; margin-top: 14px; }
+.past-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.past-head h2 { font-size: 20px; margin: 0; }
+.past-grid { display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.past-list { display: flex; flex-direction: column; gap: 12px; }
+.pl-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pl-head h3 { font-size: 14px; font-weight: 600; margin: 0; color: var(--text-secondary); }
+.pl-rides { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pl-rides button { width: 100%; flex-direction: column; align-items: stretch; gap: 4px; padding: 10px 12px;
+                   text-align: left; white-space: normal; background: var(--surface-1); }
+.pl-rides button.on { border-color: var(--action); background: color-mix(in srgb, var(--action) 14%, var(--surface-1)); }
+.pl-name { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-weight: 600; min-width: 0; }
+.pl-name small { font-weight: 400; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.pl-nums { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.pl-file { border-top: 1px solid var(--border); padding-top: 10px; }
+.pl-file summary { cursor: pointer; font-size: 14px; color: var(--text-secondary); padding: 10px 0; }
+.past-result { min-width: 0; scroll-margin-top: 12px; }
+.past-empty { margin: 0; padding: 40px 16px; text-align: center; color: var(--text-muted);
+              border: 1px dashed var(--border); border-radius: 12px; }
+@media (max-width: 820px) { .past-grid { grid-template-columns: minmax(0, 1fr); } }

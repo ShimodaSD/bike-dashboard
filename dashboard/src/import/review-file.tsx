@@ -44,7 +44,7 @@ export function ReviewFile({ ftp, coach }: { ftp: number; coach?: CoachStatus })
   );
 }
 
-function FileResult({ ride, ftp, coach }: { ride: RideFile; ftp: number; coach?: CoachStatus }) {
+export function FileResult({ ride, ftp, coach }: { ride: RideFile; ftp: number; coach?: CoachStatus }) {
   const { hist } = ride;
   const st = stats(hist, ftp, null);
   const b20 = bestPower(hist, 1200);

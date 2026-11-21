@@ -10,12 +10,16 @@ Start X2Max.command   double-click to start (macOS)
 logger/               thinkrider_logger.py: Bluetooth, recording, .FIT, web server
                       trainer_control.py: climb simulation / ERG over FTMS (off by default)
                       ftp_test.py: the guided FTP test and its saved results
+                      coach.py: Ask Claude; garmin_rides.py: Garmin Personal API; env.py: .env keys
 dashboard/            dashboard.html (built, served by the logger) and its React + TypeScript source in src/
   src/types/          the logger's SSE payloads (feed.ts) and the workout model (workout.ts)
   src/workout/        workout files: reading .zwo / .erg / .mrc, step targets, off-target beep
   src/control/        Trainer control band: grade slider, ERG, workout grades
   src/ftp/            FTP test: start button, test band, result and saved results
   src/util/           ride maths: zones, NP, TSS, lap stats
+  src/review/         Ride review, its summary for Claude and Ask Claude
+  src/import/         reading ride files (.fit / .tcx / .gpx / CSV) for a review
+  src/past/           Past rides page (#rides): your last 10 Garmin rides, pick one to review
   test/               dashboard tests: unit/ (Vitest), components/ (React Testing Library), e2e/ (Playwright)
 tests/                logger tests (pytest); helpers/ has the fake Bluetooth, a .FIT reader and an HTTP client
 workouts/             test workouts: power, heart rate, cadence and speed targets (load them in Settings)
@@ -132,10 +136,13 @@ after Finish it shows the ride's summary and a **Ride review**: what kind of rid
 heart-rate drift against power on steady rides, pacing, how much of a workout was on target and
 which steps missed, and a hint when a best 20 min says your FTP is set too low. It is worked
 out in the browser from the ride, your FTP and the loaded workout; nothing is sent anywhere.
-**Review a ride file** (on the Preview strip, or Settings › Past rides) gives the same review for a
-ride you already did: a `.fit` (this logger, Garmin, Wahoo, Zwift, Strava's Export original), a
-`.tcx`, a `.gpx` with power, or this logger's `session_1hz.csv`. The file is read in the browser
-and nothing is saved; the trainer doesn't need to be on.
+**Past rides** (on the Preview strip, or Settings › Past rides; the page is `#rides`) gives the same
+review for a ride you already did. With `GARMIN_API_KEY` set, **Load my last 10 rides** lists your
+last 10 bike rides from Garmin Connect; pick one and the logger downloads its original `.fit` from
+Garmin, then the review (and Ask Claude) appear next to the list. Or open **Or review a ride file
+from this computer** and pick a `.fit` (this logger, Garmin, Wahoo, Zwift, Strava's Export
+original), a `.tcx`, a `.gpx` with power, or this logger's `session_1hz.csv`. Files are read in the
+browser and nothing is saved; the trainer doesn't need to be on.
 **Ask Claude for a coach's review** (under the Ride review, optional) sends the ride's summary to
 Claude, with your last six weeks of Garmin activities and last week's sleep and HRV when Garmin is set
 up, and shows a coach's take: what went well, what to work on, your training load and the next

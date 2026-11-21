@@ -262,3 +262,78 @@ def test_other_websites_cannot_ask_claude(live):
         async with serve(live) as port:
             return await request(port, "POST", "/coach", {"Origin": "https://evil.example"}, json.dumps(RIDE).encode())
     assert run(go())[0] == 403 and not msgs.calls
+
+
+# ---------------------------------------------------------------- Past rides page: Garmin list + .fit
+class RidesApi(FakeApi):
+    def search_activities(self, **kw):
+        FakeApi.calls.append(kw)
+        acts = [{"activityId": 100 + i, "activityName": f"Ride {i}", "startTimeLocal": f"2026-11-{10 + i:02d} 18:00:00",
+                 "activityType": {"typeKey": "virtual_ride" if i % 2 else "road_biking"}} for i in range(12)]
+        return acts + [{"activityId": 9, "activityName": "Run", "startTimeLocal": "2026-11-30 07:00:00",
+                        "activityType": {"typeKey": "running"}}]
+
+    def download_activity(self, activity_id):
+        import io
+        import zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr(f"{activity_id}_ACTIVITY.fit", b"\x0e\x10\x00\x00\x00\x00\x00\x00.FITdata")
+        return buf.getvalue()
+
+
+@pytest.fixture
+def garmin(monkeypatch, tmp_path):
+    monkeypatch.setattr(garmin_rides, "PersonalApiAuthenticator", FakeAuth)
+    monkeypatch.setattr(garmin_rides, "GarminPersonalApiClient", RidesApi)
+    monkeypatch.setenv("GARMIN_API_KEY", "key")
+    return garmin_rides.GarminRides(token_cache=str(tmp_path / "t.json"))
+
+
+def test_rides_are_the_last_10_bike_rides(garmin):
+    rows = garmin.rides(10)
+    assert len(rows) == 10 and rows[0]["name"] == "Ride 11" and rows[0]["id"] == 111
+    assert all(r["cycling"] for r in rows)                          # the run is left out
+
+
+def test_fit_comes_out_of_the_zip(garmin):
+    assert garmin.fit("111")[8:12] == b".FIT"
+    with pytest.raises(ValueError):
+        garmin.fit("../etc")
+
+
+def test_fit_from_zip_without_a_fit():
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("notes.txt", "x")
+    with pytest.raises(garmin_rides.GarminError, match="no .fit"):
+        garmin_rides.fit_from_zip(buf.getvalue())
+    with pytest.raises(garmin_rides.GarminError, match="isn't a .fit"):
+        garmin_rides.fit_from_zip(b"garbage!!!!!!!")
+
+
+def test_garmin_endpoints(live, garmin):
+    live.coach = coach_mod.Coach(garmin=garmin, client=fake_client()[0])
+
+    async def go():
+        async with serve(live) as port:
+            return (await request(port, "GET", "/garmin/rides"),
+                    await request(port, "GET", "/garmin/activity.fit?id=105"),
+                    await request(port, "GET", "/garmin/activity.fit?id=abc"))
+    (c1, _, b1), (c2, h2, b2), (c3, _, _) = run(go())
+    assert c1 == 200 and len(json.loads(b1)["rides"]) == 10
+    assert c2 == 200 and h2["content-type"] == "application/vnd.ant.fit" and b2[8:12] == b".FIT"
+    assert c3 == 400
+
+
+def test_garmin_rides_without_a_key(live, monkeypatch):
+    monkeypatch.delenv("GARMIN_API_KEY", raising=False)
+    live.coach = coach_mod.Coach(garmin=garmin_rides.GarminRides(), client=fake_client()[0])
+
+    async def go():
+        async with serve(live) as port:
+            return await request(port, "GET", "/garmin/rides")
+    code, _, body = run(go())
+    assert code == 503 and "GARMIN_API_KEY" in json.loads(body)["error"]

@@ -119,7 +119,7 @@ class Coach:
                 model=MODEL,
                 max_tokens=16000,
                 system=SYSTEM,
-                output_config={"effort": "medium", "format": {"type": "json_schema", "schema": SCHEMA}},
+                output_config={"effort": "low", "format": {"type": "json_schema", "schema": SCHEMA}},
                 betas=["server-side-fallback-2026-07-01"],
                 fallbacks="default",
                 messages=[{"role": "user", "content": json.dumps(data, separators=(",", ":"))}],

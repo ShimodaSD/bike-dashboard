@@ -30,6 +30,7 @@ beforeEach(() => {
   localStorage.clear();
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
   vi.setSystemTime(new Date('2026-03-01T09:00:00Z'));
+  window.location.hash = '';
 });
 
 describe('Start and Finish', () => {
@@ -167,24 +168,25 @@ describe('ride review', () => {
   });
 
   it('reviews a ride file without touching the live ride', async () => {
+    window.location.hash = '#rides';
     const user = await renderApp();
-    await user.click(screen.getByRole('button', { name: 'Review a ride file' }));
-    const drawer = screen.getByRole('complementary', { name: 'Review a ride file' });
+    const page = screen.getByRole('region', { name: 'Past rides' });
+    await user.click(within(page).getByText('Or review a ride file from this computer'));
     const fit = readFileSync(join(import.meta.dirname, '../fixtures/ride.fit'));
-    await user.upload(within(drawer).getByLabelText('Choose a ride file'), new File([fit], 'ride.fit'));
-    const review = await within(drawer).findByRole('region', { name: 'Ride review' }, { timeout: 3000 });
+    await user.upload(within(page).getByLabelText('Choose a ride file'), new File([fit], 'ride.fit'));
+    const review = await within(page).findByRole('region', { name: 'Ride review' }, { timeout: 3000 });
     expect(review).toHaveTextContent('Sweet spot ride');            // FTP 200: 15 min at 150 W, 15 at 200 W
     expect(review).toHaveTextContent('Heart-rate drift not judged');  // power stepped up halfway
-    expect(drawer).toHaveTextContent('29:30');
+    expect(page).toHaveTextContent('29:30');
     expect(posted()).toEqual([]);                                     // nothing sent to the logger
   });
 
   it('says when a file cannot be read', async () => {
+    window.location.hash = '#rides';
     const user = await renderApp();
-    await user.click(screen.getByRole('button', { name: 'Review a ride file' }));
-    const drawer = screen.getByRole('complementary', { name: 'Review a ride file' });
-    await user.upload(within(drawer).getByLabelText('Choose a ride file'), new File(['nope'], 'ride.fit'));
-    expect(await within(drawer).findByRole('alert', {}, { timeout: 3000 })).toHaveTextContent('This .fit file is empty or cut short.');
+    const page = screen.getByRole('region', { name: 'Past rides' });
+    await user.upload(within(page).getByLabelText('Choose a ride file'), new File(['nope'], 'ride.fit'));
+    expect(await within(page).findByRole('alert', {}, { timeout: 3000 })).toHaveTextContent('This .fit file is empty or cut short.');
   });
 
   it('is only on the finished screen', async () => {
@@ -231,6 +233,59 @@ describe('Ask Claude', () => {
     await renderApp({ ...finished(), coach: { claude: false, garmin: false, model: 'claude-opus-5-5' } }, ride(Array(600).fill(150)));
     expect(screen.getByText(/Add/).closest('p')).toHaveTextContent('Add ANTHROPIC_API_KEY to the .env file');
     expect(screen.queryByRole('button', { name: /Ask Claude/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('Past rides page', () => {
+  const garminOn = { ...status(), coach: { claude: true, garmin: true, model: 'claude-opus-5-5' } };
+  const rides = [
+    { id: 111, date: '2026-11-18 18:30:00', name: 'Sweet spot', type: 'virtual_ride', cycling: true, duration_min: 30, distance_km: 15.2, np_w: 180, tss: 40, avg_hr: 140 },
+    { id: 222, date: '2026-11-16 07:00:00', name: 'Long ride', type: 'road_biking', cycling: true, duration_min: 120, distance_km: 60, np_w: 160, tss: 110, avg_hr: 130 },
+  ];
+
+  it('is linked from the ready screen and swaps the live dashboard out', async () => {
+    await renderApp();
+    expect(screen.getByRole('link', { name: 'Past rides' })).toHaveAttribute('href', '#rides');
+    act(() => { window.location.hash = '#rides'; window.dispatchEvent(new HashChangeEvent('hashchange')); });
+    expect(screen.getByRole('heading', { name: 'Past rides' })).toBeInTheDocument();
+    expect(screen.queryByTestId('charts')).not.toBeInTheDocument();
+    act(() => { window.location.hash = ''; window.dispatchEvent(new HashChangeEvent('hashchange')); });
+    expect(screen.getByTestId('charts')).toBeInTheDocument();
+  });
+
+  it('without a Garmin key it says how to set it up', async () => {
+    window.location.hash = '#rides';
+    await renderApp({ ...status(), coach: { claude: true, garmin: false, model: 'claude-opus-5-5' } });
+    expect(screen.getByRole('region', { name: 'Past rides' })).toHaveTextContent('Add GARMIN_API_KEY to the .env file');
+    expect(screen.queryByRole('button', { name: /Load my last 10 rides/ })).not.toBeInTheDocument();
+  });
+
+  it('loads the last rides, downloads the picked one and reviews it', async () => {
+    window.location.hash = '#rides';
+    const user = await renderApp(garminOn);
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ rides }), { status: 200 }));
+    await user.click(screen.getByRole('button', { name: 'Load my last 10 rides' }));
+    const pick = await screen.findByRole('button', { name: /Long ride/ });
+    expect(pick).toHaveTextContent('120 min');
+    expect(pick).toHaveTextContent('TSS 110');
+    expect(vi.mocked(fetch).mock.calls.at(-1)![0]).toBe('/garmin/rides');
+    const fit = readFileSync(join(import.meta.dirname, '../fixtures/ride.fit'));
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(fit, { status: 200 }));
+    await user.click(screen.getByRole('button', { name: /Sweet spot/ }));
+    expect(vi.mocked(fetch).mock.calls.at(-1)![0]).toBe('/garmin/activity.fit?id=111');
+    const review = await screen.findByRole('region', { name: 'Ride review' }, { timeout: 3000 });
+    expect(review).toHaveTextContent('Sweet spot ride');
+    expect(screen.getByRole('button', { name: /Sweet spot/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: /Ask Claude/ })).toBeInTheDocument();
+  });
+
+  it('shows Garmin\'s error with a way to try again', async () => {
+    window.location.hash = '#rides';
+    const user = await renderApp(garminOn);
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Garmin refused the API key: it may have expired.' }), { status: 503 }));
+    await user.click(screen.getByRole('button', { name: 'Load my last 10 rides' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Garmin refused the API key');
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
   });
 });
 

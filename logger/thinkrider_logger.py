@@ -79,6 +79,7 @@ except ImportError:                       # --demo works without bleak
 from trainer_control import TrainerControl, DemoControl, CONTROL_POINT  # noqa: E402 (logger/)
 from ftp_test import FtpTests  # noqa: E402 (logger/)
 from coach import Coach, CoachError  # noqa: E402 (logger/)
+from garmin_rides import GarminError  # noqa: E402 (logger/)
 from env import load_env  # noqa: E402 (logger/)
 
 
@@ -733,6 +734,22 @@ async def handle_http(reader, writer, live: Live):
             except (ValueError, asyncio.IncompleteReadError):
                 result, code = {"error": "Bad request."}, "400 Bad Request"
             body, ctype = json.dumps(result).encode(), "application/json"
+        elif path == "/garmin/rides" and live.coach:
+            # Past rides page: the last 10 cycling activities on Garmin Connect
+            try:
+                rows = await asyncio.to_thread(live.coach.garmin.rides, 10, params.get("refresh") == "1")
+                result, code = {"rides": rows}, "200 OK"
+            except GarminError as e:
+                result, code = {"error": str(e)}, "503 Service Unavailable"
+            body, ctype = json.dumps(result).encode(), "application/json"
+        elif path == "/garmin/activity.fit" and live.coach:
+            try:
+                body = await asyncio.to_thread(live.coach.garmin.fit, params.get("id", ""))
+                ctype, code = "application/vnd.ant.fit", "200 OK"
+            except GarminError as e:
+                body, ctype, code = json.dumps({"error": str(e)}).encode(), "application/json", "503 Service Unavailable"
+            except ValueError:
+                body, ctype, code = json.dumps({"error": "Bad activity id."}).encode(), "application/json", "400 Bad Request"
         elif path == "/resume" and method == "POST":
             ok = live.resume_ride()
             body, ctype = (b"ok", "text/plain") if ok else (b"nothing to resume", "text/plain")

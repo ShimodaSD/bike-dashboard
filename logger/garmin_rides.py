@@ -9,8 +9,10 @@ The key is swapped for a 24-hour access token, cached in config/garmin_token.jso
 """
 import os
 import sys
+import io
 import threading
 import time
+import zipfile
 from datetime import date, datetime, timedelta
 
 try:
@@ -40,6 +42,7 @@ def activity_row(a):
     """The fields of one Garmin activity that matter for training load, in plain units."""
     typ = (a.get("activityType") or {}).get("typeKey") or ""
     return {
+        "id": a.get("activityId"),
         "date": a.get("startTimeLocal"),            # "2026-11-18 18:30:00", local time
         "name": a.get("activityName"),
         "type": typ,
@@ -91,6 +94,7 @@ class GarminRides:
     def __init__(self, token_cache=TOKEN_CACHE):
         self.token_cache = token_cache
         self.cache = (0.0, None)
+        self.rides_cache = (0.0, None)
         self.lock = threading.Lock()
 
     def configured(self):
@@ -141,6 +145,62 @@ class GarminRides:
             ctx["activities"].sort(key=lambda r: r["date"] or "", reverse=True)
             self.cache = (time.monotonic(), ctx)
             return ctx
+
+
+    def rides(self, n=10, refresh=False):
+        """The last `n` cycling activities (newest first) from the last year, for the Past rides
+        page. Cached for 10 min unless `refresh`."""
+        with self.lock:
+            at, rows = self.rides_cache
+            if rows is not None and not refresh and time.monotonic() - at < CACHE_S:
+                return rows[:n]
+            client = self._client()
+            today = date.today()
+            try:
+                with client:
+                    acts = client.search_activities(limit=100, start_date=today - timedelta(days=365), end_date=today)
+            except HttpError as e:
+                raise GarminError(f"Couldn't read Garmin activities ({e.status_code}).") from None
+            except (GarminPersonalApiError, ValueError, OSError) as e:
+                raise GarminError(f"Couldn't read Garmin activities: {str(e)[:160]}") from None
+            rows = [r for r in (activity_row(a) for a in (acts if isinstance(acts, list) else []) if isinstance(a, dict))
+                    if r["cycling"] and r["id"]]
+            rows.sort(key=lambda r: r["date"] or "", reverse=True)
+            self.rides_cache = (time.monotonic(), rows)
+            return rows[:n]
+
+    def fit(self, activity_id):
+        """The original .fit of one activity (Garmin sends it zipped)."""
+        activity_id = str(activity_id)
+        if not activity_id.isdecimal() or len(activity_id) > 20:
+            raise ValueError("bad activity id")
+        client = self._client()
+        try:
+            with client:
+                data = client.download_activity(activity_id)
+        except HttpError as e:
+            raise GarminError("Garmin has no such activity." if e.status_code == 404
+                              else f"Couldn't download the activity ({e.status_code}).") from None
+        except (GarminPersonalApiError, OSError) as e:
+            raise GarminError(f"Couldn't download the activity: {str(e)[:160]}") from None
+        return fit_from_zip(data)
+
+
+def fit_from_zip(data):
+    """The .fit inside Garmin's download (a zip), or the bytes themselves if they already are one."""
+    if data[8:12] == b".FIT":
+        return data
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            names = [n for n in z.namelist() if n.lower().endswith(".fit")]
+            if not names:
+                raise GarminError("This activity has no .fit file (it may be a manual entry).")
+            info = z.getinfo(names[0])
+            if info.file_size > 50_000_000:
+                raise GarminError("The activity file is too big.")
+            return z.read(info)
+    except zipfile.BadZipFile:
+        raise GarminError("Garmin sent a file that isn't a .fit or a zip.") from None
 
 
 def same_ride(row, ride_start_iso, within_s=900):
