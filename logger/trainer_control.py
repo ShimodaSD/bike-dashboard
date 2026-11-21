@@ -23,6 +23,9 @@ DemoControl gives the same behaviour without Bluetooth, for --demo.
 """
 
 import asyncio
+import json
+import math
+import os
 import struct
 
 
@@ -51,9 +54,20 @@ POWER_MIN, POWER_MAX = 50, 1000        # W (narrowed to the trainer's own range 
 SEND_GAP = 0.4                         # s between commands while a slider is dragged
 REPLY_TIMEOUT = 3.0
 
-# Rolling resistance and wind drag sent with every grade (Zwift-like road bike values).
+# How hard a climb feels: the rider can change these on the dashboard (Settings > Climb feel).
+# They are kept in config/trainer.json and apply at once, also mid-climb.
+#   difficulty  % of the road grade the trainer is sent (like Zwift's trainer difficulty):
+#               100 = the real grade, 50 = a 10 % climb feels like 5 %. Descents scale too.
+#   crr         rolling resistance sent with every grade (0.004 = road tyres on asphalt)
+#   cw          wind resistance coefficient in kg/m sent with every grade (0.51 = the value
+#               Zwift and most FTMS apps send). The trainer turns it into air drag at speed.
+# Whether the trainer uses crr and cw is up to its firmware; the grade always counts.
 CRR = 0.004                            # sent in 0.0001 units -> 40
 CW = 0.51                              # kg/m, sent in 0.01 units -> 51
+DIFFICULTY = 100
+SIM_DEFAULTS = {"difficulty": DIFFICULTY, "crr": CRR, "cw": CW}
+SIM_LIMITS = {"difficulty": (0, 150), "crr": (0.001, 0.02), "cw": (0.1, 1.5)}
+SIM_ROUND = {"difficulty": 0, "crr": 4, "cw": 2}       # decimals the trainer can take
 
 
 # --------------------------------------------------------------------------
@@ -80,6 +94,24 @@ def cmd_simulation(grade_pct: float, wind_ms: float = 0.0, crr: float = CRR, cw:
     crr uint8 (0.0001), cw uint8 (0.01 kg/m)."""
     return struct.pack("<BhhBB", OP_SIMULATION, round(wind_ms * 1000), round(grade_pct * 100),
                        clamp(round(crr * 10000), 0, 255), clamp(round(cw * 100), 0, 255))
+
+
+def trainer_grade(grade_pct: float, difficulty: float) -> float:
+    """The grade the trainer is sent for a road grade at this trainer difficulty (%)."""
+    return round(grade_pct * difficulty / 100, 2)
+
+
+def clean_sim(raw) -> dict:
+    """Climb feel settings from a file or the dashboard: known keys, finite numbers, in range,
+    rounded to what the trainer takes. Anything missing or broken falls back to the default."""
+    out = dict(SIM_DEFAULTS)
+    if isinstance(raw, dict):
+        for k, (lo, hi) in SIM_LIMITS.items():
+            v = raw.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
+                out[k] = round(clamp(float(v), lo, hi), SIM_ROUND[k])
+    out["difficulty"] = int(out["difficulty"])
+    return out
 
 
 def cmd_target_power(watts: float) -> bytes:
@@ -109,12 +141,16 @@ class ControlBase:
     enabled   the rider's toggle
     state     off | connecting | on | lost | unsupported | error | waiting (no trainer)
     mode      sim (grade) | erg (target power)
-    grade     % in sim mode, power_w in erg mode: what the trainer was told
+    grade     % in sim mode (the road grade the rider picked), power_w in erg mode
+    trainer_grade  the grade the trainer is sent: grade x difficulty
+    sim       climb feel: {difficulty, crr, cw} (see SIM_DEFAULTS)
     msg       a sentence for the dashboard when something went wrong
     """
 
-    def __init__(self, live):
+    def __init__(self, live, sim_file=None):
         self.live = live
+        self.sim_file = sim_file                # None: climb feel isn't saved (tests, --demo)
+        self.sim = clean_sim(_read_sim(sim_file))
         self.enabled = False
         self.state = "off"
         self.mode = "sim"
@@ -129,7 +165,8 @@ class ControlBase:
     # -- what the dashboard reads ------------------------------------------
     def snapshot(self):
         return {"enabled": self.enabled, "state": self.state, "mode": self.mode,
-                "grade": self.grade, "power_w": self.power_w, "msg": self.msg,
+                "grade": self.grade, "trainer_grade": self.trainer_grade(),
+                "sim": dict(self.sim), "power_w": self.power_w, "msg": self.msg,
                 "supports": self.supports, "power_range": list(self.power_range)}
 
     def _publish(self):
@@ -140,6 +177,15 @@ class ControlBase:
         for k, v in kw.items():
             setattr(self, k, v)
         self._publish()
+
+    def trainer_grade(self):
+        """The grade the trainer is (or would be) sent for the current road grade."""
+        return trainer_grade(self.grade, self.sim["difficulty"])
+
+    def sim_command(self, grade_pct=None):
+        """Set Indoor Bike Simulation Parameters for the current grade with the climb feel."""
+        g = self.trainer_grade() if grade_pct is None else trainer_grade(grade_pct, self.sim["difficulty"])
+        return cmd_simulation(g, crr=self.sim["crr"], cw=self.sim["cw"])
 
     # -- the grade / power the ride should record --------------------------
     def current_grade(self):
@@ -163,6 +209,26 @@ class ControlBase:
         self._set(mode="sim", grade=round(clamp(pct, GRADE_MIN, GRADE_MAX) * 2) / 2)
         self._changed()
 
+    def set_sim(self, **changes):
+        """Change the climb feel (difficulty / crr / cw). Saved, and sent at once in Climb mode."""
+        new = clean_sim({**self.sim, **changes})
+        if new == self.sim:
+            return
+        self._set(sim=new)
+        self._save_sim()
+        if self.mode == "sim":
+            self._changed()
+
+    def _save_sim(self):
+        if not self.sim_file:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.sim_file), exist_ok=True)
+            with open(self.sim_file, "w") as fh:
+                json.dump(self.sim, fh, indent=2)
+        except OSError as e:
+            print(f"Could not save {self.sim_file}: {e}")
+
     def set_power(self, watts: float):
         lo, hi = self.power_range
         self._set(mode="erg", power_w=int(round(clamp(watts, lo, hi) / 5) * 5))
@@ -185,8 +251,8 @@ class ControlBase:
 class TrainerControl(ControlBase):
     """FTMS control of a real trainer over Bluetooth (bleak client)."""
 
-    def __init__(self, live):
-        super().__init__(live)
+    def __init__(self, live, sim_file=None):
+        super().__init__(live, sim_file)
         self.client = None
         self.cp = None
         self._reply = None                       # Future for the command waiting for its answer
@@ -339,11 +405,11 @@ class TrainerControl(ControlBase):
                 raise ControlError(0x02)
             res = await self._send(cmd_target_power(self.power_w))
         else:
-            res = await self._send(cmd_simulation(self.grade))
+            res = await self._send(self.sim_command())
         if res == 0x05:                           # lost control: ask once more
             await self._take_control()
             res = await self._send(cmd_target_power(self.power_w) if self.mode == "erg"
-                                   else cmd_simulation(self.grade))
+                                   else self.sim_command())
         if res != 0x01:
             raise ControlError(res)
 
@@ -358,7 +424,7 @@ class TrainerControl(ControlBase):
     async def _release(self):
         """Flat road, then give control back (Reset)."""
         try:
-            await self._send(cmd_simulation(0))
+            await self._send(self.sim_command(0))
             await self._send(cmd_reset())
             print("Trainer control off (0 %, control released)")
         except Exception:
@@ -377,6 +443,16 @@ class TrainerControl(ControlBase):
                 pass
 
 
+def _read_sim(path):
+    if not path:
+        return None
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
 class ControlError(Exception):
     def __init__(self, code):
         super().__init__(RESULTS.get(code, f"result {code}"))
@@ -387,8 +463,8 @@ class DemoControl(ControlBase):
     """--demo: no Bluetooth. Turning it on succeeds after a short delay; the demo ride
     reads current_grade() / mode to change its speed and power."""
 
-    def __init__(self, live):
-        super().__init__(live)
+    def __init__(self, live, sim_file=None):
+        super().__init__(live, sim_file)
         self._task = None
 
     def attach(self):

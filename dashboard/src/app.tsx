@@ -17,6 +17,7 @@
 import { memo, useState, useEffect, useRef, useMemo, useCallback, type CSSProperties, type ReactNode } from 'react';
 import { WorkoutBand, WorkoutSettings, workoutAt } from './workout/workout';
 import { ClimbBand, useWorkoutControl, controlKey } from './control/climb';
+import { ClimbFeel } from './control/climb-feel';
 import { useLiveFeed, type LiveNow, type RecentPower } from './hooks/feed';
 import { useStored } from './hooks/stored';
 import { useArmed, useEvent } from './hooks/hooks';
@@ -28,7 +29,7 @@ import { PastRides } from './past/past-rides';
 import { useRoute, RIDES_HASH } from './hooks/route';
 import { FtpTestBand, FtpTestSettings, protocolWorkout, startFtpTest, type FtpTestSettingsProps } from './ftp/ftp';
 import type { DeviceChoice, DeviceKind, DeviceRole, FoundDevice, HrState, HrStatus, LiveValues, RideState,
-  RideStatus, Sample, ScanStatus, Status, TrainerState } from './types/feed';
+  RideStatus, Sample, ScanStatus, SimSettings, Status, TrainerState } from './types/feed';
 import type { Workout } from './types/workout';
 import type { WorkoutSettingsProps } from './workout/workout';
 
@@ -207,9 +208,9 @@ interface SettingsProps {
   ftp: number; setFtp: (v: number) => void; kg: number | null; setKg: (v: number | null) => void;
   onCsv: () => void; canCsv: boolean; smooth: number; setSmooth: (v: number) => void;
   liveRate: LiveRate; setLiveRate: (v: LiveRate) => void; recording: boolean; workout: WorkoutSettingsProps;
-  ftpTest?: FtpTestSettingsProps;
+  ftpTest?: FtpTestSettingsProps; sim?: SimSettings;
 }
-export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout, ftpTest }: SettingsProps) {
+export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout, ftpTest, sim }: SettingsProps) {
   return (
     <section className="settings">
       <FtpField key={ftp} ftp={ftp} setFtp={setFtp} />
@@ -218,6 +219,7 @@ export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmo
         <FtpTestSettings {...ftpTest} />
       </div>}
       <WeightField key={kg ?? ''} kg={kg} setKg={setKg} />
+      {sim && <ClimbFeel sim={sim} />}
       <div className="field">
         <label htmlFor="smooth">Power number</label>
         <div className="inline">
@@ -721,7 +723,8 @@ export function App() {
       {panel === 'settings' && <Drawer id="settings" title="Settings" onClose={closePanel}><Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
                                  onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} recording={mode === 'recording'}
                                  workout={{ wo, setWo, sound: woSound, setSound: setWoSound }}
-                                 ftpTest={{ ftpStatus, ftp, setFtp, recording: mode === 'recording', startArmed: testArmed, onStart: startTest }} /></Drawer>}
+                                 ftpTest={{ ftpStatus, ftp, setFtp, recording: mode === 'recording', startArmed: testArmed, onStart: startTest }}
+                                 sim={online ? ctl?.sim : undefined} /></Drawer>}
       {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
       {route === 'rides' ? <PastRides ftp={ftp} coach={online ? status.coach : undefined} /> : <>

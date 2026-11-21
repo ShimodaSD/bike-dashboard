@@ -1,6 +1,7 @@
 """Self-check for trainer control (climb simulation / ERG) with a fake FTMS trainer.
 Run: uv run pytest"""
 import asyncio
+import json
 import os
 import struct
 import sys
@@ -162,3 +163,76 @@ class ControlTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClimbFeelTest(unittest.TestCase):
+    """Trainer difficulty, rolling and wind resistance: what the rider changes in Settings."""
+
+    def test_difficulty_scales_the_grade_sent(self):
+        self.assertEqual(tc.trainer_grade(10, 50), 5.0)
+        self.assertEqual(tc.trainer_grade(-4, 50), -2.0)
+        self.assertEqual(tc.trainer_grade(6, 100), 6.0)
+        self.assertEqual(tc.trainer_grade(6, 0), 0.0)
+
+    def test_settings_are_cleaned(self):
+        self.assertEqual(tc.clean_sim(None), tc.SIM_DEFAULTS)
+        self.assertEqual(tc.clean_sim({"difficulty": 999, "crr": 0, "cw": "x"}),
+                         {"difficulty": 150, "crr": 0.001, "cw": 0.51})
+        self.assertEqual(tc.clean_sim({"difficulty": 47.6, "crr": 0.00512, "cw": float("nan")}),
+                         {"difficulty": 48, "crr": 0.0051, "cw": 0.51})
+        self.assertEqual(tc.clean_sim({"difficulty": True}), tc.SIM_DEFAULTS)
+
+    def test_change_applies_live_and_is_saved(self):
+        async def go():
+            with tempfile.TemporaryDirectory() as tmp:
+                live = tl.Live(tmp)
+                old, tc.SEND_GAP = tc.SEND_GAP, 0.01
+                path = os.path.join(tmp, "config", "trainer.json")
+                try:
+                    ctl = live.control = tc.TrainerControl(live, sim_file=path)
+                    bike = FakeTrainer(ctl)
+                    await ctl.attach(bike)
+                    ctl.set_enabled(True)
+                    ctl.set_grade(10)
+                    await asyncio.sleep(0.05)
+                    self.assertEqual(bike.writes[-1], tc.cmd_simulation(10))
+                    ctl.set_sim(difficulty=50, crr=0.006, cw=0.4)       # mid-climb: sent at once
+                    await asyncio.sleep(0.05)
+                    self.assertEqual(bike.writes[-1], struct.pack("<BhhBB", 0x11, 0, 500, 60, 40))
+                    self.assertEqual(ctl.current_grade(), 10)            # the ride keeps the road grade
+                    snap = live.status["control"]
+                    self.assertEqual((snap["grade"], snap["trainer_grade"]), (10, 5.0))
+                    self.assertEqual(snap["sim"], {"difficulty": 50, "crr": 0.006, "cw": 0.4})
+                    with open(path) as fh:
+                        self.assertEqual(json.load(fh), snap["sim"])
+                    ctl.set_enabled(False)                                # flat + Reset keep the feel
+                    await asyncio.sleep(0.05)
+                    self.assertEqual(bike.writes[-2], struct.pack("<BhhBB", 0x11, 0, 0, 60, 40))
+                    again = tc.TrainerControl(live, sim_file=path)        # next start: remembered
+                    self.assertEqual(again.sim["difficulty"], 50)
+                finally:
+                    tc.SEND_GAP = old
+        asyncio.run(go())
+
+    def test_change_in_erg_waits_for_climb(self):
+        async def go():
+            with tempfile.TemporaryDirectory() as tmp:
+                live = tl.Live(tmp)
+                old, tc.SEND_GAP = tc.SEND_GAP, 0.01
+                try:
+                    ctl = live.control = tc.TrainerControl(live)
+                    bike = FakeTrainer(ctl)
+                    await ctl.attach(bike)
+                    ctl.set_enabled(True)
+                    ctl.set_power(200)
+                    await asyncio.sleep(0.05)
+                    n = len(bike.writes)
+                    ctl.set_sim(difficulty=40)
+                    await asyncio.sleep(0.05)
+                    self.assertEqual(len(bike.writes), n)                 # ERG: nothing sent
+                    ctl.set_grade(5)
+                    await asyncio.sleep(0.05)
+                    self.assertEqual(bike.writes[-1], tc.cmd_simulation(2))
+                finally:
+                    tc.SEND_GAP = old
+        asyncio.run(go())

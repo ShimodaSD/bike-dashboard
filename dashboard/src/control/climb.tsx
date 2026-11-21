@@ -4,7 +4,9 @@
 //   POST /control?on=1|0      turn control on / off
 //   POST /control/grade?pct=  simulate this grade (Climb mode)
 //   POST /control/power?w=    hold this power (ERG mode)
-// status.control = { enabled, state, mode: 'sim'|'erg', grade, power_w, msg, supports, power_range }
+//   POST /control/sim?difficulty=&crr=&cw=   climb feel (Settings, control/climb-feel.tsx)
+// status.control = { enabled, state, mode: 'sim'|'erg', grade, trainer_grade, sim, power_w, msg,
+//                    supports, power_range }
 import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import { useEvent } from '../hooks/hooks';
 import type { ControlState, ControlStatus } from '../types/feed';
@@ -32,7 +34,7 @@ const STATE_TXT: Record<ControlState, string> = {
 // Sends at most every `gap` ms while a slider is dragged, and always the last value.
 // A send still pending when the dial goes away (control off, Climb <-> ERG) is dropped, so a
 // late grade can't flip the trainer back to the other mode.
-function useThrottled(fn: (v: number) => void, gap = 150) {
+export function useThrottled(fn: (v: number) => void, gap = 150) {
   const last = useRef(0), timer = useRef<ReturnType<typeof setTimeout>>(), pending = useRef(0);
   useEffect(() => () => clearTimeout(timer.current), []);
   return useCallback((v: number) => {
@@ -117,6 +119,8 @@ export function ClimbBand({ ctl, ftp, follow }: { ctl: ControlStatus; ftp: numbe
                 step={GRADE_STEP} quick={QUICK} quickLabel={g => `${g} %`} onSet={sendGrade} />)}
       {on && <p className="climb-foot">
         {follow ? <>{follow} </> : null}
+        {!erg && ctl.sim.difficulty !== 100 && <>Trainer difficulty {ctl.sim.difficulty} %:
+          it feels like {fmtGrade(ctl.trainer_grade)} %. </>}
         Back to 0 % when you finish or the trainer disconnects.<span className="keys"> Keys: <kbd>−</kbd> <kbd>+</kbd></span></p>}
     </section>
   );
