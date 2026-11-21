@@ -401,6 +401,14 @@ describe('connection', () => {
     expect(posted()).toContain('/devices/scan');
   });
 
+  it('the logo goes back to Live', async () => {
+    const user = await renderApp();
+    await openPage(user, 'Settings');
+    await user.click(screen.getByRole('link', { name: /go to Live/ }));
+    await act(async () => { window.dispatchEvent(new HashChangeEvent('hashchange')); });
+    expect(screen.getByTestId('charts')).toBeInTheDocument();
+  });
+
   it('first-start Devices gives way when Live is pressed', async () => {
     const user = await renderApp(status({ devices: { trainer: { mode: 'auto' }, hr: { mode: 'auto' } } }));
     await openPage(user, 'Live');

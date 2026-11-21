@@ -118,7 +118,7 @@ export function Header({ status, ride, act, page, onNavigate }: HeaderProps) {
   const hrPill = hr.state && HR_STATUS[hr.state];
   return (
     <header>
-      <h1><Logo />Bike <span>Live training</span></h1>
+      <h1><a className="home" href="#" onClick={onNavigate} aria-label="Bike, Live training: go to Live"><Logo />Bike <span>Live training</span></a></h1>
       <a className={'pills' + (devicesOpen ? ' on' : '')} href="#devices" onClick={onNavigate}
          title="Choose the trainer and heart-rate device">
         <Pill col={col} long={txt(status)} short={short} />
