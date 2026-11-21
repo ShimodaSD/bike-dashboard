@@ -4,15 +4,20 @@ import { memo, useId } from 'react';
 import type { Sample } from '../types/feed';
 import type { Workout } from '../types/workout';
 import type { RideStats } from '../util/ride';
+import type { CoachStatus } from '../types/coach';
 import { reviewRide, type Tone } from './review';
+import { AskClaude } from './ask-claude';
+import { rideSummary } from './summary';
 
 const MARK: Record<Tone, string> = { good: '✓', info: '•', warn: '!' };
 const TONE_LABEL: Record<Tone, string> = { good: 'Good', info: 'Note', warn: 'Watch' };
 
 interface RideReviewProps {
   hist: Sample[]; st: RideStats; ftp: number; workout: Workout | null; woStart: number; ftpTest: boolean;
+  coach?: CoachStatus;                              // the logger's Ask Claude support (undefined: hidden)
+  laps?: number[]; source?: 'live' | 'file'; name?: string;
 }
-export const RideReview = memo(function RideReview({ hist, st, ftp, workout, woStart, ftpTest }: RideReviewProps) {
+export const RideReview = memo(function RideReview({ hist, st, ftp, workout, woStart, ftpTest, coach, laps, source = 'live', name }: RideReviewProps) {
   const r = reviewRide({ hist, st, ftp, workout, woStart, ftpTest });
   const hid = useId();
   return (
@@ -40,6 +45,8 @@ export const RideReview = memo(function RideReview({ hist, st, ftp, workout, woS
         ))}
       </ul>
       <p className="rv-foot">Worked out on this computer from your FTP of {ftp} W{workout && !ftpTest ? ` and the workout ${workout.name}` : ''}.</p>
+      {coach && !r.tooShort && <AskClaude key={`${source}:${name ?? ''}:${hist[0]?.timestamp_utc}:${hist.length}`} coach={coach}
+                                          summary={() => rideSummary({ hist, st, ftp, review: r, laps, source, name })} />}
     </section>
   );
 });

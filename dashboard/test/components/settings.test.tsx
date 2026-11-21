@@ -15,7 +15,7 @@ function Harness({ recording = false, canCsv = true, onCsv = () => {} }) {
   const [wo, setWo] = useState<Workout | null>(null), [sound, setSound] = useState(true);
   return <>
     <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} smooth={smooth} setSmooth={setSmooth}
-              liveRate={liveRate} setLiveRate={setLiveRate} onCsv={onCsv} canCsv={canCsv} onReviewFile={() => {}} recording={recording}
+              liveRate={liveRate} setLiveRate={setLiveRate} onCsv={onCsv} canCsv={canCsv} recording={recording}
               workout={{ wo, setWo, sound, setSound }} />
     <output data-testid="saved">{JSON.stringify({ ftp, kg, smooth, liveRate, wo: wo?.name ?? null, steps: wo?.segs.length, sound })}</output>
   </>;

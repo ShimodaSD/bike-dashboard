@@ -15,12 +15,12 @@ async def serve(live):
         server.close()          # open /events streams end with the event loop (no wait_closed)
 
 
-async def request(port, method, path, headers=None):
+async def request(port, method, path, headers=None, body=b""):
     """(status code, headers dict, body bytes)."""
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
-    hdrs = {"Host": f"127.0.0.1:{port}", **(headers or {})}
+    hdrs = {"Host": f"127.0.0.1:{port}", **({"Content-Length": str(len(body))} if body else {}), **(headers or {})}
     head = f"{method} {path} HTTP/1.1\r\n" + "".join(f"{k}: {v}\r\n" for k, v in hdrs.items() if v is not None)
-    writer.write((head + "\r\n").encode())
+    writer.write((head + "\r\n").encode() + body)
     await writer.drain()
     raw = await reader.read()
     writer.close()

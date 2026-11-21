@@ -1,5 +1,6 @@
 // What logger/thinkrider_logger.py sends on GET /events (Server-Sent Events).
 // Keep in step with Live.now(), Live.tick(), Live.status, Devices and ControlBase.snapshot().
+import type { CoachStatus } from './coach';
 
 // The four ride series shown on the charts.
 export type SeriesKey = 'power_w' | 'cadence_rpm' | 'heart_rate_bpm' | 'speed_kmh';
@@ -120,6 +121,7 @@ export interface Status {
   scan?: ScanStatus;
   control?: ControlStatus;
   ftp?: FtpStatus;
+  coach?: CoachStatus;               // logger/coach.py: Ask Claude on the Ride review
 }
 
 // `init`: the whole ride so far, sent on connect, Start and Clear.

@@ -6,6 +6,7 @@ import { RideReview } from '../review/review-panel';
 import { TimeInZone } from '../review/zones';
 import { bestPower, fmtT, stats } from '../util/ride';
 import { readRideFile, type RideFile } from './ridefile';
+import type { CoachStatus } from '../types/coach';
 
 export const RIDE_FILE_TYPES = '.fit,.tcx,.gpx,.csv';
 
@@ -14,7 +15,7 @@ type Loaded = { state: 'idle' } | { state: 'reading'; name: string } | { state: 
 const r0 = (v: number | null | undefined) => (v == null ? '–' : Math.round(v));
 const fmtWhen = (d: Date | null) => d ? d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
 
-export function ReviewFile({ ftp }: { ftp: number }) {
+export function ReviewFile({ ftp, coach }: { ftp: number; coach?: CoachStatus }) {
   const [loaded, setLoaded] = useState<Loaded>({ state: 'idle' });
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -38,12 +39,12 @@ export function ReviewFile({ ftp }: { ftp: number }) {
         {loaded.state === 'reading' && <span className="note" role="status">Reading {loaded.name}…</span>}
       </div>
       {loaded.state === 'error' && <p className="note err" role="alert">{loaded.msg}</p>}
-      {ride && <FileResult ride={ride} ftp={ftp} />}
+      {ride && <FileResult ride={ride} ftp={ftp} coach={coach} />}
     </section>
   );
 }
 
-function FileResult({ ride, ftp }: { ride: RideFile; ftp: number }) {
+export function FileResult({ ride, ftp, coach }: { ride: RideFile; ftp: number; coach?: CoachStatus }) {
   const { hist } = ride;
   const st = stats(hist, ftp, null);
   const b20 = bestPower(hist, 1200);
@@ -63,7 +64,7 @@ function FileResult({ ride, ftp }: { ride: RideFile; ftp: number }) {
         <div><dt>Avg cadence</dt><dd>{r0(st.avgCad)}{st.avgCad ? <small> rpm</small> : null}</dd></div>
         <div><dt>Energy</dt><dd>{Math.round(st.kj)}<small> kJ</small></dd></div>
       </dl>
-      <RideReview hist={hist} st={st} ftp={ftp} workout={null} woStart={0} ftpTest={false} />
+      <RideReview hist={hist} st={st} ftp={ftp} workout={null} woStart={0} ftpTest={false} coach={coach} source="file" name={ride.name} />
       <TimeInZone st={st} ftp={ftp} />
     </>}
   </>;

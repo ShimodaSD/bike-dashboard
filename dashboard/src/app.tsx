@@ -24,7 +24,8 @@ import { ZONES, nz, fmtT, zoneOf, stats, bestPower, tssOf, fmtTss, avg3, livePow
 import { Charts } from './charts/charts';
 import { RideReview } from './review/review-panel';
 import { TimeInZone } from './review/zones';
-import { ReviewFile } from './import/review-file';
+import { PastRides } from './past/past-rides';
+import { useRoute, RIDES_HASH } from './hooks/route';
 import { FtpTestBand, FtpTestSettings, protocolWorkout, startFtpTest, type FtpTestSettingsProps } from './ftp/ftp';
 import type { DeviceChoice, DeviceKind, DeviceRole, FoundDevice, HrState, HrStatus, LiveValues, RideState,
   RideStatus, Sample, ScanStatus, Status, TrainerState } from './types/feed';
@@ -32,7 +33,7 @@ import type { Workout } from './types/workout';
 import type { WorkoutSettingsProps } from './workout/workout';
 
 type Mode = RideState;                   // what the page shows: ready (preview), recording, finished
-type Panel = 'devices' | 'settings' | 'review';
+type Panel = 'devices' | 'settings';
 type LiveRate = 'auto' | 'fast' | 'saver';
 // Which Download / Send buttons were used, for which .fit
 interface Sent { fit: string | null; to: string[] }
@@ -204,11 +205,11 @@ function WeightField({ kg, setKg }: { kg: number | null; setKg: (v: number | nul
 
 interface SettingsProps {
   ftp: number; setFtp: (v: number) => void; kg: number | null; setKg: (v: number | null) => void;
-  onCsv: () => void; canCsv: boolean; onReviewFile: () => void; smooth: number; setSmooth: (v: number) => void;
+  onCsv: () => void; canCsv: boolean; smooth: number; setSmooth: (v: number) => void;
   liveRate: LiveRate; setLiveRate: (v: LiveRate) => void; recording: boolean; workout: WorkoutSettingsProps;
   ftpTest?: FtpTestSettingsProps;
 }
-export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, onReviewFile, smooth, setSmooth, liveRate, setLiveRate, recording, workout, ftpTest }: SettingsProps) {
+export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout, ftpTest }: SettingsProps) {
   return (
     <section className="settings">
       <FtpField key={ftp} ftp={ftp} setFtp={setFtp} />
@@ -250,8 +251,8 @@ export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, onReviewFile, 
       </div>
       <div className="field">
         <span className="flabel">Past rides</span>
-        <div className="inline"><button onClick={onReviewFile}>Review a ride file</button></div>
-        <p className="help">Evaluate a ride you already did from its .fit, .tcx, .gpx or CSV file.</p>
+        <div className="inline"><a className="btn" href={RIDES_HASH}>Past rides</a></div>
+        <p className="help">Pick one of your last 10 Garmin rides, or a .fit, .tcx, .gpx or CSV file, and get its review.</p>
       </div>
       <div className="field">
         <span className="flabel">Clear data</span>
@@ -558,10 +559,9 @@ interface RideStripProps {
   ride: Partial<RideStatus>; seconds: number; startArmed: boolean; lapFlash: number; sent: Sent;
   onDownload: (...to: string[]) => void;
   onFtpTest?: () => void;                           // Start FTP test (ready state)
-  onReviewFile?: () => void;                        // Review a ride file (ready state)
   ftpTest?: boolean;                                // this ride is an FTP test
 }
-export function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownload, onFtpTest, onReviewFile, ftpTest }: RideStripProps) {
+export function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownload, onFtpTest, ftpTest }: RideStripProps) {
   const dir = ride.dir ? `${ride.dir}/` : 'the ride folder';
   let cls = 'ready', body: ReactNode;
   if (ride.state === 'recording') {
@@ -593,7 +593,7 @@ export function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownloa
     body = <><span className="badge">Preview</span>
       <span>Live numbers only. Nothing is saved until you press <b>Start</b>.</span>
       <span className="strip-acts">
-        {onReviewFile && <button className="quiet" onClick={onReviewFile}>Review a ride file</button>}
+        <a className="btn quiet" href={RIDES_HASH}>Past rides</a>
         {onFtpTest && <button onClick={onFtpTest}>Start FTP test</button>}
       </span></>;
   }
@@ -615,6 +615,7 @@ const NOT_SENT: Sent = { fit: null, to: [] };
 const LAP_FLASH_S = 3;                               // "Lap N started" for the lap's first seconds
 
 export function App() {
+  const route = useRoute();
   const [smooth, setSmooth] = useStored('powerSmooth', 0);
   const [liveRate, setLiveRate] = useStored<LiveRate>('liveRate', 'auto');
   const rate = liveRate === 'saver' || (liveRate === 'auto' && TOUCH) ? 2 : 0;
@@ -671,7 +672,10 @@ export function App() {
     finishArmed, startArmed,
     lap: postLap,
     finish: () => pressFinish(() => post('/finish')),
-    start: () => unsaved ? pressStart(() => post('/start')) : post('/start'),
+    start: () => {
+      if (route === 'rides') window.location.hash = '';   // a new ride: back to the live numbers
+      return unsaved ? pressStart(() => post('/start')) : post('/start');
+    },
   };
   // FTP test: the logger runs it as a ride; while it is on, its steps replace the loaded workout.
   const ftpStatus = status.ftp;
@@ -693,7 +697,7 @@ export function App() {
   // Keys: S start, L lap, F finish, − / + grade or ERG power. One document listener for the
   // app's lifetime; useEvent lets it see the current ride and control state.
   const onKey = useEvent((e: KeyboardEvent) => {
-    if (e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
+    if (route === 'rides' || e.metaKey || e.ctrlKey || e.altKey || ['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
     const key = e.key.toLowerCase();
     if (key === 'l' && mode === 'recording') act.lap();
     else if (key === 'f' && mode === 'recording') act.finish();
@@ -714,16 +718,15 @@ export function App() {
       {panel === 'devices' && <Drawer id="devices" title="Devices" onClose={closePanel}>
         <Devices status={status} recording={mode === 'recording'} /></Drawer>}
       {panel === 'settings' && <Drawer id="settings" title="Settings" onClose={closePanel}><Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
-                                 onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} onReviewFile={() => setPanel('review')} recording={mode === 'recording'}
+                                 onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} recording={mode === 'recording'}
                                  workout={{ wo, setWo, sound: woSound, setSound: setWoSound }}
                                  ftpTest={{ ftpStatus, ftp, setFtp, recording: mode === 'recording', startArmed: testArmed, onStart: startTest }} /></Drawer>}
-      {panel === 'review' && <Drawer id="review-file" title="Review a ride file" onClose={closePanel} wide>
-        <ReviewFile ftp={ftp} /></Drawer>}
       {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
+      {route === 'rides' ? <PastRides ftp={ftp} coach={online ? status.coach : undefined} /> : <>
       <RideStrip ride={ride} seconds={hist.length} startArmed={startArmed} lapFlash={lapFlash}
                  sent={sent || NOT_SENT} onDownload={markSent} ftpTest={testing}
-                 onFtpTest={ftpStatus && online ? startTest : undefined} onReviewFile={() => setPanel('review')} />
+                 onFtpTest={ftpStatus && online ? startTest : undefined} />
       {ftpStatus && ftpRun && mode !== 'ready' && <FtpTestBand ftpStatus={ftpStatus} hist={hist} mode={mode} ftp={ftp} setFtp={setFtp} />}
       {showCtl && <ClimbBand ctl={ctl} ftp={ftp} follow={woDrives} />}
       {activeWo && mode !== 'finished' ? <WorkoutBand wo={activeWo} t={Math.max(0, hist.length - (testing ? ftpRun?.t0 ?? 0 : 0))} mode={mode} ftp={ftp} sound={woSound}
@@ -732,7 +735,8 @@ export function App() {
                             cadence={fresh ? now.cadence_rpm : last ? last.cadence_rpm : null}
                             hr={fresh ? now.heart_rate_bpm : last ? last.heart_rate_bpm : null}
                             speed={fresh ? now.speed_kmh : last ? last.speed_kmh : null} /> : null}
-      {mode === 'finished' && hist.length > 0 && <RideReview hist={hist} st={st} ftp={ftp} workout={wo} woStart={0} ftpTest={!!ftpRun} />}
+      {mode === 'finished' && hist.length > 0 && <RideReview hist={hist} st={st} ftp={ftp} workout={wo} woStart={0} ftpTest={!!ftpRun}
+                                                                   coach={online ? status.coach : undefined} laps={laps} source="live" />}
       <Hero hist={hist} laps={laps} st={st} ftp={ftp} preview={mode === 'recording' ? null : preview} mode={mode}
             now={now} recent={recent} smooth={smooth} />
       <Stats hist={hist} st={st} ftp={ftp} kg={kg} more={more} setMore={setMore} mode={mode} />
@@ -744,6 +748,7 @@ export function App() {
           <Laps hist={hist} laps={laps} ftp={ftp} recording={mode === 'recording'} version={version} />
         </div>
       </section>
+      </>}
     </div>
   );
 }
