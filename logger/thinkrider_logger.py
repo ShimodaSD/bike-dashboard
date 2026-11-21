@@ -1034,6 +1034,12 @@ def _num(v):
     return float(v)
 
 
+# Calories burned per kJ of work at the pedals. Gross efficiency measured in cyclists is ~19 %
+# (Med Sci Sports Exerc 2013;45(9):1833-40: energy expenditure = work x 5.3), so
+# 1 kJ of work costs 5.3 kJ = 1.27 kcal. Same factor as kcalOf() in dashboard/src/util/ride.ts.
+KCAL_PER_KJ = 5.3 / 4.184
+
+
 def _summary(rows):
     """Lap/session totals from 1 Hz samples."""
     pw = [r["power_w"] or 0 for r in rows]
@@ -1049,7 +1055,7 @@ def _summary(rows):
         "avg_cad": sum(cad) / len(cad) if cad else None, "max_cad": max(cad) if cad else None,
         "avg_hr": sum(hr) / len(hr) if hr else None, "max_hr": max(hr) if hr else None,
         "avg_spd": sum(spd) / len(spd) if spd else None, "max_spd": max(spd) if spd else None,
-        "work_j": work_j, "kcal": work_j / 1000,   # ~24% efficiency: 1 kJ at pedals ~= 1 kcal
+        "work_j": work_j, "kcal": work_j / 1000 * KCAL_PER_KJ,
     }
 
 
