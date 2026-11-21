@@ -1,5 +1,5 @@
-// Climb feel in Settings: trainer difficulty, rolling and wind resistance, sent to the logger.
-import { act, fireEvent, render, screen } from '@testing-library/react';
+// Climb feel in the Trainer control band: trainer difficulty, rolling and wind resistance, sent to the logger.
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClimbFeel, SIM_DEFAULTS } from '../../src/control/climb-feel';
@@ -19,18 +19,23 @@ describe('Climb feel', () => {
     expect(screen.getByText('The trainer gets the real grade.', { exact: false })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '50 %' }));
     expect(posted()).toEqual(['/control/sim?difficulty=50']);
-    expect(screen.getByLabelText('Trainer difficulty')).toHaveValue('50');
+    expect(screen.getByRole('status', { name: 'Trainer difficulty' })).toHaveTextContent('50 %');
     expect(screen.getByText('5 %')).toBeInTheDocument();             // a 10 % climb feels like 5 %
   });
 
-  it('the slider is throttled and always sends the last value', () => {
-    render(<ClimbFeel sim={SIM_DEFAULTS} />);
-    const slider = screen.getByLabelText('Trainer difficulty');
-    fireEvent.change(slider, { target: { value: '90' } });
-    fireEvent.change(slider, { target: { value: '80' } });
-    fireEvent.change(slider, { target: { value: '70' } });
-    act(() => { vi.advanceTimersByTime(200); });
-    expect(posted()).toEqual(['/control/sim?difficulty=90', '/control/sim?difficulty=70']);
+  it('− / + step 5 % and stop at the limits', async () => {
+    const user = userEvent.setup({ delay: null });
+    const { rerender } = render(<ClimbFeel sim={SIM_DEFAULTS} />);
+    await user.click(screen.getByRole('button', { name: 'Trainer difficulty down' }));
+    await user.click(screen.getByRole('button', { name: 'Trainer difficulty down' }));
+    expect(posted()).toEqual(['/control/sim?difficulty=95', '/control/sim?difficulty=90']);
+    expect(screen.getByRole('status', { name: 'Trainer difficulty' })).toHaveTextContent('90 %');
+    act(() => { vi.advanceTimersByTime(2000); });                   // logger never confirmed: back to its value
+    expect(screen.getByRole('status', { name: 'Trainer difficulty' })).toHaveTextContent('100 %');
+    rerender(<ClimbFeel sim={{ ...SIM_DEFAULTS, difficulty: 150 }} />);
+    expect(screen.getByRole('button', { name: 'Trainer difficulty up' })).toBeDisabled();
+    rerender(<ClimbFeel sim={{ ...SIM_DEFAULTS, difficulty: 0 }} />);
+    expect(screen.getByRole('button', { name: 'Trainer difficulty down' })).toBeDisabled();
   });
 
   it('rolling resistance presets, and a custom value from the logger is kept', async () => {
@@ -70,11 +75,16 @@ describe('Trainer control band with a lower difficulty', () => {
   it('says what the climb feels like', () => {
     render(<ClimbBand ctl={control({ enabled: true, state: 'on', grade: 8, trainer_grade: 4,
                                      sim: { difficulty: 50, crr: 0.004, cw: 0.51 } })} ftp={200} follow={null} />);
-    expect(screen.getByText(/Trainer difficulty 50 %/)).toHaveTextContent('it feels like 4.0 %');
+    expect(screen.getByText(/At 50 % difficulty/)).toHaveTextContent('the trainer feels 4.0 %');
   });
 
-  it('says nothing at 100 %', () => {
-    render(<ClimbBand ctl={control({ enabled: true, state: 'on', grade: 8, trainer_grade: 8 })} ftp={200} follow={null} />);
-    expect(screen.queryByText(/Trainer difficulty/)).toBeNull();
+  it('shows Climb feel on Live in Climb mode and while off, not in ERG', () => {
+    const { rerender } = render(<ClimbBand ctl={control()} ftp={200} follow={null} />);
+    expect(screen.getByRole('group', { name: 'Climb feel' })).toBeInTheDocument();
+    rerender(<ClimbBand ctl={control({ enabled: true, state: 'on', grade: 8, trainer_grade: 8 })} ftp={200} follow={null} />);
+    expect(screen.getByRole('group', { name: 'Climb feel' })).toBeInTheDocument();
+    expect(screen.queryByText(/% difficulty/)).toBeNull();          // 100 %: nothing to explain
+    rerender(<ClimbBand ctl={control({ enabled: true, state: 'on', mode: 'erg' })} ftp={200} follow={null} />);
+    expect(screen.queryByRole('group', { name: 'Climb feel' })).toBeNull();
   });
 });
