@@ -15,7 +15,8 @@ export function status(over: Partial<Status> = {}): Status {
 }
 
 export function control(over: Partial<ControlStatus> = {}): ControlStatus {
-  return { enabled: false, state: 'off', mode: 'sim', grade: 0, power_w: 150, msg: null,
+  return { enabled: false, state: 'off', mode: 'sim', grade: 0, trainer_grade: 0,
+           sim: { difficulty: 100, crr: 0.004, cw: 0.51 }, power_w: 150, msg: null,
            supports: { sim: true, erg: true }, power_range: [50, 1000], ...over };
 }
 

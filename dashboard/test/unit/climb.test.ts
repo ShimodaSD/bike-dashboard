@@ -6,7 +6,8 @@ import { parseWorkout, workoutAt } from '../../src/workout/workout';
 import type { ControlStatus } from '../../src/types/feed';
 
 const ctl = (over: Partial<ControlStatus> = {}): ControlStatus => ({
-  enabled: true, state: 'on', mode: 'sim', grade: 3, power_w: 200, msg: null,
+  enabled: true, state: 'on', mode: 'sim', grade: 3, trainer_grade: 3, power_w: 200, msg: null,
+  sim: { difficulty: 100, crr: 0.004, cw: 0.51 },
   supports: { sim: true, erg: true }, power_range: [50, 1000], ...over,
 });
 const posted = () => vi.mocked(fetch).mock.calls.map(c => c[0]);

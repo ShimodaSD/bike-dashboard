@@ -21,6 +21,9 @@ class StubControl:
     def set_power(self, w):
         self.calls.append(("power", w))
 
+    def set_sim(self, **kw):
+        self.calls.append(("sim", kw))
+
     def to_flat(self, why):
         pass
 
@@ -140,14 +143,18 @@ class TestRideEndpoints:
 class TestControlEndpoint:
     def test_valid_commands(self, live):
         async def steps(port):
-            for path in ("/control?on=1", "/control/grade?pct=6.5", "/control/power?w=210", "/control?on=0"):
+            for path in ("/control?on=1", "/control/grade?pct=6.5", "/control/power?w=210", "/control?on=0",
+                         "/control/sim?difficulty=50", "/control/sim?crr=0.005&cw=0.4"):
                 assert (await request(port, "POST", path))[0] == 200, path
         run(live, steps)
-        assert live.control.calls == [("on", True), ("grade", 6.5), ("power", 210.0), ("on", False)]
+        assert live.control.calls == [("on", True), ("grade", 6.5), ("power", 210.0), ("on", False),
+                                      ("sim", {"difficulty": 50.0}), ("sim", {"crr": 0.005, "cw": 0.4})]
 
     @pytest.mark.parametrize("path", ["/control", "/control?on=yes", "/control/grade", "/control/grade?pct=steep",
                                       "/control/grade?pct=nan", "/control/grade?pct=inf",
-                                      "/control/power?w=-inf", "/control/power?w=NaN", "/control/other"])
+                                      "/control/power?w=-inf", "/control/power?w=NaN", "/control/other",
+                                      "/control/sim", "/control/sim?difficulty=nan", "/control/sim?weight=80",
+                                      "/control/sim?difficulty=50&grade=3"])
     def test_bad_commands(self, live, path):
         async def steps(port):
             assert (await request(port, "POST", path))[0] == 400

@@ -570,3 +570,14 @@ header .controls button.pause.on { border-color: var(--warning); color: var(--wa
   header .controls button.pause kbd { display: none; }
 }
 .wo-state.paused { color: var(--warning); }
+
+/* ---------------- climb feel (Settings): trainer difficulty, rolling and wind resistance */
+.settings .feel-diff input[type=range] { flex: 1; min-width: 140px; width: auto; padding: 0; border: 0; background: none;
+                                         accent-color: var(--action); min-height: var(--tap); text-align: left; }
+.feel-val { min-width: 5ch; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-primary); font-weight: 600; }
+.feel-quick { min-width: 64px; font-variant-numeric: tabular-nums; }
+.feel-quick.on { background: var(--action); border-color: var(--action); color: #fff; font-weight: 600; }
+.feel-more summary { cursor: pointer; min-height: var(--tap); display: flex; align-items: center;
+                     font-size: 14px; color: var(--text-secondary); }
+.feel-more[open] > .field { margin-top: 8px; }
+.feel-more > .help { margin-bottom: 8px; }

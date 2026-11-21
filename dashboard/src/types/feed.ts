@@ -63,13 +63,22 @@ export interface ScanStatus {
   error?: string;
 }
 
+// Climb feel (logger/trainer_control.py SIM_DEFAULTS), saved by the logger.
+export interface SimSettings {
+  difficulty: number;                // % of the grade sent to the trainer
+  crr: number;                       // rolling resistance
+  cw: number;                        // wind resistance coefficient, kg/m
+}
+
 // Trainer control (logger/trainer_control.py)
 export type ControlState = 'off' | 'connecting' | 'on' | 'waiting' | 'lost' | 'error' | 'unsupported';
 export interface ControlStatus {
   enabled: boolean;
   state: ControlState;
   mode: 'sim' | 'erg';
-  grade: number;                     // % (Climb mode)
+  grade: number;                     // % (Climb mode): the road grade picked
+  trainer_grade: number;             // % the trainer is sent: grade x difficulty
+  sim: SimSettings;                  // climb feel
   power_w: number;                   // W (ERG mode)
   msg: string | null;
   supports: { sim: boolean; erg: boolean };
