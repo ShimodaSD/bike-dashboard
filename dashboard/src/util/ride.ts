@@ -83,3 +83,7 @@ export function livePower(now: LiveNow, recent: RecentPower[], smooth: number) {
   const w = recent.filter(x => now.at - x.at < smooth * 1000);
   return w.length ? w.reduce((t, x) => t + x.p, 0) / w.length : now.power_w;
 }
+
+// Calories burned from the work done at the pedals: at ~24 % gross efficiency 1 kJ of work costs
+// 1 / 0.24 ≈ 4.2 kJ of food energy ≈ 1 kcal, so the estimate most bike computers use is kcal = kJ.
+export const kcalOf = (kj: number) => kj;

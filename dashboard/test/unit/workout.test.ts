@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CAD_TOL, beepDue, offTarget, parseWorkout, plannedLine, powerTol, workoutAt, type BeepClock } from '../../src/workout/workout';
+import { CAD_TOL, beepDue, offTarget, parseWorkout, plannedLine, powerTol, tileTargets, workoutAt, type BeepClock } from '../../src/workout/workout';
 import type { Workout } from '../../src/types/workout';
 
 const repoWorkout = (name: string) => parseWorkout(readFileSync(join(import.meta.dirname, '../../../workouts', name), 'utf8'), name);
@@ -154,6 +154,39 @@ describe('off target', () => {
   it('missing readings are not off target', () => {
     expect(offTarget(at(20), null, null, null, null)).toBeNull();
     expect(offTarget(null, 0, 0, 0, 0)).toBeNull();
+  });
+});
+
+describe('targets on the live tiles', () => {
+  const wo: Workout = { name: 't', total: 600, segs: [
+    { dur: 300, lo: 0.5, hi: 1.0, unit: 'ftp', cad: 90, hr: 140, spd: 32, grade: 4, name: 'Ramp' },
+    { dur: 300, lo: null, hi: null, unit: 'ftp', cad: null, name: 'Free ride' },
+  ] };
+
+  it('gives each target the step has, power interpolated', () => {
+    const t = tileTargets(workoutAt(wo, 150, 200), 150, 90, 140, 32);
+    expect(t.power_w).toEqual({ v: 150, unit: 'W', state: 'ok' });
+    expect(t.cadence_rpm?.v).toBe(90);
+    expect(t.heart_rate_bpm?.v).toBe(140);
+    expect(t.speed_kmh?.v).toBe(32);
+    expect(t.grade).toBe(4);
+  });
+
+  it('low / high with the beep tolerances', () => {
+    const t = tileTargets(workoutAt(wo, 150, 200), 150 - powerTol(150) - 1, 90 + CAD_TOL + 1, 120, 40);
+    expect([t.power_w?.state, t.cadence_rpm?.state, t.heart_rate_bpm?.state, t.speed_kmh?.state]).toEqual(['low', 'high', 'low', 'high']);
+  });
+
+  it('waits in the first seconds of a step (heart rate longer), without a reading, and while paused', () => {
+    expect(tileTargets(workoutAt(wo, 3, 200), 0, 0, 0, 0).power_w?.state).toBe('wait');
+    const t = tileTargets(workoutAt(wo, 20, 200), 300, 90, 100, null);
+    expect([t.power_w?.state, t.heart_rate_bpm?.state, t.speed_kmh?.state]).toEqual(['high', 'wait', 'wait']);
+    expect(tileTargets(workoutAt(wo, 150, 200), 300, 90, 140, 32, true).power_w?.state).toBe('wait');
+  });
+
+  it('nothing for a free ride step or after the workout', () => {
+    expect(tileTargets(workoutAt(wo, 400, 200), 200, 90, 140, 30)).toEqual({});
+    expect(tileTargets(workoutAt(wo, 700, 200), 200, 90, 140, 30)).toEqual({});
   });
 });
 

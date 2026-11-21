@@ -48,6 +48,15 @@ describe('workout band', () => {
     expect(screen.getByText('Next: 150 bpm for 1:00')).toBeInTheDocument();
   });
 
+  it('paused: no warning, no beep, says it waits', () => {
+    render(band({ t: 30, power: 50, paused: true }));
+    expect(screen.getByRole('status')).toHaveTextContent('Paused');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    vi.setSystemTime(1_700_000_020_000);
+    render(band({ t: 30, power: 50, paused: true }));
+    expect(tones).toEqual([]);
+  });
+
   it('first seconds of a step: get to the target, no warning', () => {
     render(band({ t: 3, power: 50 }));
     expect(screen.getByRole('status')).toHaveTextContent('Get to the target');

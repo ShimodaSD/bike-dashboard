@@ -44,7 +44,8 @@ Broadcast Heart Rate, or add the Broadcast Heart Rate control to the controls
 menu). The logger connects to it as a second Bluetooth device and keeps
 reconnecting if it drops.
 
-Press Start on the dashboard to begin recording and Finish to end the ride:
+Press Start on the dashboard to begin recording, Pause to stop the clock for a
+while, and Finish to end the ride:
 Finish saves ride_<date>_<time>.fit, which you can download from the dashboard
 and upload to Strava (strava.com/upload/select) or Garmin Connect (Import Data).
 Ctrl+C during a ride also saves it.
@@ -351,7 +352,7 @@ class Live:
         self.clients = set()           # asyncio.Queue per dashboard tab
         self.status = {"state": "starting", "connected": False, "device": None,
                        "hr": {"state": "off", "device": None},
-                       "ride": {"state": "ready", "n": 0, "fit": None,
+                       "ride": {"state": "ready", "n": 0, "fit": None, "paused": False,
                                 "dir": os.path.basename(os.path.abspath(out_dir))}}
         self.trainer_address = None
         self.distance_m = 0.0
@@ -389,7 +390,8 @@ class Live:
         self.sess_f = open(self.sess_path, "w", newline="")
         self.sess_w = csv.DictWriter(self.sess_f, fieldnames=SESSION_FIELDS)
         self.sess_w.writeheader()
-        self.status["ride"] = {**self.status["ride"], "state": "recording", "n": n, "fit": None}
+        self.status["ride"] = {**self.status["ride"], "state": "recording", "n": n, "fit": None,
+                               "paused": False}
         if self.ftp_tests:
             self.ftp_tests.on_ride_start()
         print(f"Ride {n} started")
@@ -405,7 +407,7 @@ class Live:
         self.sess_f = None
         path = os.path.join(self.out_dir, self.ride_start.strftime("ride_%Y%m%d_%H%M%S.fit"))
         self.fit_path = path if write_fit(path, self.history, self.laps) else None
-        self.status["ride"] = {**self.status["ride"], "state": "finished",
+        self.status["ride"] = {**self.status["ride"], "state": "finished", "paused": False,
                                "fit": self.fit_path and os.path.basename(self.fit_path)}
         if self.ftp_tests:
             self.ftp_tests.on_ride_finish()
@@ -423,10 +425,27 @@ class Live:
             return False
         self.sess_f = open(self.sess_path, "a", newline="")
         self.sess_w = csv.DictWriter(self.sess_f, fieldnames=SESSION_FIELDS)
-        self.status["ride"] = {**self.status["ride"], "state": "recording", "fit": None}
+        self.status["ride"] = {**self.status["ride"], "state": "recording", "fit": None,
+                               "paused": False}
         if self.ftp_tests:
             self.ftp_tests.on_ride_resume()
         print(f"Ride {self.status['ride']['n']} resumed")
+        self.broadcast("status", self.status)
+        return True
+
+    @property
+    def paused(self):
+        return self.recording and bool(self.status["ride"].get("paused"))
+
+    def set_paused(self, on):
+        """Pause button: while paused the ride timer stops and no samples are recorded,
+        so averages, distance and energy skip the stop. The .FIT marks the gap as a
+        timer stop / start (see build_fit), so Strava shows the right moving time."""
+        on = bool(on)
+        if not self.recording or self.paused == on:
+            return False
+        self.status["ride"] = {**self.status["ride"], "paused": on}
+        print(f"Ride {self.status['ride']['n']} {'paused' if on else 'continued'}")
         self.broadcast("status", self.status)
         return True
 
@@ -439,7 +458,7 @@ class Live:
         self.history, self.laps = [], [0]
         self.distance_m = self.energy_kj = 0.0
         self.ride_start = self.fit_path = self.sess_path = None
-        self.status["ride"] = {**self.status["ride"], "state": "ready", "fit": None}
+        self.status["ride"] = {**self.status["ride"], "state": "ready", "fit": None, "paused": False}
         if self.ftp_tests:
             self.ftp_tests.on_ride_start()        # a test in progress goes too
         print("Dashboard cleared")
@@ -519,7 +538,7 @@ class Live:
         if hr is None:
             hr = self._get("heart_rate_bpm", 10)
         spd = 0 if spd is None and ("speed_kmh" in self.vals) else spd
-        if not self.recording:                      # before Start / after Finish:
+        if not self.recording or self.paused:       # before Start / after Finish / paused:
             self.broadcast("preview", {             # live numbers only, not saved
                 "power_w": round(power), "cadence_rpm": round(cad),
                 "speed_kmh": None if spd is None else round(spd, 2),
@@ -750,6 +769,11 @@ async def handle_http(reader, writer, live: Live):
                 body, ctype, code = json.dumps({"error": str(e)}).encode(), "application/json", "503 Service Unavailable"
             except ValueError:
                 body, ctype, code = json.dumps({"error": "Bad activity id."}).encode(), "application/json", "400 Bad Request"
+        elif path == "/pause" and method == "POST":
+            # Pause / continue the ride in progress: /pause?on=1 or /pause?on=0
+            ok = live.set_paused(params.get("on") == "1")
+            body, ctype = (b"ok", "text/plain") if ok else (b"not now", "text/plain")
+            code = "200 OK" if ok else "409 Conflict"
         elif path == "/resume" and method == "POST":
             ok = live.resume_ride()
             body, ctype = (b"ok", "text/plain") if ok else (b"nothing to resume", "text/plain")
@@ -1047,7 +1071,7 @@ def build_fit(history, laps) -> bytes:
     ev = lambda ts, typ: f.msg(21, [(253, U32, ts), (0, ENUM, 0), (1, ENUM, typ), (4, U8, 0)])
     ev(start, 0)                                               # timer start
     for i, r in enumerate(rows):
-        if i and r["ts"] - rows[i - 1]["ts"] > 2:             # trainer dropped: pause timer
+        if i and r["ts"] - rows[i - 1]["ts"] > 2:             # paused or trainer dropped: timer stop / start
             ev(rows[i - 1]["ts"], 4)
             ev(r["ts"], 0)
         f.msg(20, [(253, U32, r["ts"]), (3, U8, r["heart_rate_bpm"]),
