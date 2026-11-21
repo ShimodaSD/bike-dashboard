@@ -3,8 +3,9 @@
 //   VI                 NP ÷ average power over the same seconds
 //   EF, Pw:HR          Friel / TrainingPeaks: EF = NP ÷ avg HR; decoupling = (EF1 − EF2) ÷ EF1, by halves
 //   FTP from a test    95 % of the 20 min average (tests/test_ftp_test.py)
+//   kcal               work × 5.3 kJ of food energy (gross efficiency ~19 %, Med Sci Sports Exerc 2013)
 import { describe, expect, it } from 'vitest';
-import { npOf, stats, tssOf } from '../../src/util/ride';
+import { kcalOf, npOf, stats, tssOf } from '../../src/util/ride';
 import { reviewRide } from '../../src/review/review';
 import { parseFit } from '../../src/import/ridefile';
 import { ride } from '../fixtures/ride';
@@ -89,5 +90,12 @@ describe('.fit compressed timestamps', () => {
     const pts = parseFit(fit());
     expect(pts.map(p => p.t - pts[0].t)).toEqual([0, 101]);
     expect(pts.map(p => p.power)).toEqual([200, 210]);
+  });
+});
+
+describe('calories', () => {
+  it('1 kJ of work at the pedals burns 5.3 kJ = 1.27 kcal', () => {
+    expect(kcalOf(1)).toBeCloseTo(5.3 / 4.184, 9);
+    expect(Math.round(kcalOf(600))).toBe(760);        // an hour at ~167 W
   });
 });

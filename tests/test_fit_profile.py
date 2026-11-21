@@ -56,6 +56,7 @@ def test_session_totals_in_profile_units(two_laps_with_pause):
     assert s["avg_speed"] == pytest.approx(8.333, abs=1e-3)   # m/s
     assert s["avg_power"] == 250 and s["max_power"] == 300
     assert s["total_work"] == 30000                    # J = 200 W x 60 s + 300 W x 60 s
+    assert s["total_calories"] == round(30 * 5.3 / 4.184)   # kcal: 30 kJ of work at ~19 % efficiency
     assert s["avg_heart_rate"] == 140 and s["avg_cadence"] == 90
     assert s["num_laps"] == 2 and s["trigger"] == "activity_end"
     # NP: 30 s rolling average over the 120 samples (the pause joins them), 4th-power mean

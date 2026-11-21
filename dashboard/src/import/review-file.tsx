@@ -4,7 +4,7 @@
 import { useState, type ChangeEvent } from 'react';
 import { RideReview } from '../review/review-panel';
 import { TimeInZone } from '../review/zones';
-import { bestPower, fmtT, stats } from '../util/ride';
+import { bestPower, fmtT, kcalOf, stats } from '../util/ride';
 import { readRideFile, type RideFile } from './ridefile';
 import type { CoachStatus } from '../types/coach';
 
@@ -62,7 +62,7 @@ export function FileResult({ ride, ftp, coach }: { ride: RideFile; ftp: number; 
         <div><dt>{b20 ? 'Best 20 min' : 'Max power'}</dt><dd>{r0(b20 ?? st.maxP)}<small> W</small></dd></div>
         <div><dt>Avg heart rate</dt><dd>{r0(st.avgHr)}{st.avgHr ? <small> bpm</small> : null}</dd></div>
         <div><dt>Avg cadence</dt><dd>{r0(st.avgCad)}{st.avgCad ? <small> rpm</small> : null}</dd></div>
-        <div><dt>Energy</dt><dd>{Math.round(st.kj)}<small> kJ</small></dd></div>
+        <div><dt>Calories</dt><dd>{Math.round(kcalOf(st.kj))}<small> kcal</small></dd></div>
       </dl>
       <RideReview hist={hist} st={st} ftp={ftp} workout={null} woStart={0} ftpTest={false} coach={coach} source="file" name={ride.name} />
       <TimeInZone st={st} ftp={ftp} />
