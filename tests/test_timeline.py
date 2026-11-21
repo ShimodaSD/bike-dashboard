@@ -215,3 +215,34 @@ def test_ticker_resyncs_after_laptop_sleep(monkeypatch):
     monkeypatch.setattr(tl.asyncio, "sleep", fake_sleep)
     asyncio.run(tl.ticker(FakeLive(), 125))
     assert sleeps[1] == 1.0                      # no burst of 120 catch-up ticks
+
+
+def test_pause_stops_recording_and_continue_carries_on(live, clock):
+    tab = Tab(live)
+    live.start_ride()
+    live.update({"power_w": 200, "speed_kmh": 36.0})
+    live.tick()
+    assert live.set_paused(True)
+    assert live.status["ride"]["paused"] is True
+    tab.events()
+    for _ in range(3):                           # paused: live preview, nothing recorded
+        assert live.tick() is None
+    assert len(live.history) == 1
+    assert live.distance_m == 10.0 and live.energy_kj == pytest.approx(0.2)
+    assert "preview" in tab.names()
+    assert not live.set_paused(True)             # already paused
+    assert live.set_paused(False)
+    s = live.tick()
+    assert s["t"] == 1 and s["distance_m"] == 20.0
+
+
+def test_pause_only_while_recording_and_reset_by_finish(live, clock):
+    assert not live.set_paused(True)             # nothing to pause before Start
+    live.start_ride()
+    live.update({"power_w": 200})
+    live.tick()
+    live.set_paused(True)
+    live.finish_ride()
+    assert live.status["ride"]["paused"] is False
+    assert live.resume_ride()
+    assert live.paused is False and live.tick() is not None

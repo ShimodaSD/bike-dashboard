@@ -114,6 +114,55 @@ describe('recording', () => {
   });
 });
 
+describe('pause', () => {
+  const paused = () => recording({ ride: { state: 'recording', n: 1, fit: null, dir: 'x2max_20260301_090000', paused: true } });
+
+  it('Pause posts /pause?on=1, Resume /pause?on=0, P toggles', async () => {
+    const user = await renderApp(recording(), ride(Array(30).fill(200)));
+    await user.click(screen.getByRole('button', { name: /^Pause/ }));
+    expect(posted()).toContain('/pause?on=1');
+    latestStream().emit('status', paused());
+    expect(screen.getByRole('button', { name: /^Resume/ })).toHaveAttribute('aria-pressed', 'true');
+    await user.keyboard('p');
+    expect(posted()).toContain('/pause?on=0');
+  });
+
+  it('while paused the strip and the ride time say so and the numbers are live', async () => {
+    await renderApp(paused(), ride(Array(75).fill(250)));
+    expect(screen.getByText(/Ride 1 paused/)).toBeInTheDocument();
+    const time = screen.getByText('Ride time').closest('.tile')!;
+    expect(time).toHaveTextContent('Paused');
+    expect(time).toHaveTextContent('1:15');
+    expect(time).toHaveTextContent('Timer stopped');
+    latestStream().emit('preview', { power_w: 0, cadence_rpm: 0, speed_kmh: 0, heart_rate_bpm: 120 });
+    expect(screen.getByText('Heart rate').closest('.tile')).toHaveTextContent('120bpm');
+  });
+});
+
+describe('workout targets on the tiles', () => {
+  const sweetSpot = (over = {}) => localStorage.setItem('x2max.workout', JSON.stringify({ name: 'Sweet spot', total: 600,
+    segs: [{ dur: 600, lo: 0.9, hi: 0.9, unit: 'ftp', cad: 90, hr: 150, name: 'Steady', ...over }] }));
+
+  it('shows the target now next to the live number, coloured when off', async () => {
+    sweetSpot();
+    await renderApp(recording(), ride(Array(40).fill(150), { cadence_rpm: 91, heart_rate_bpm: 150 }));
+    const power = screen.getByText('Power').closest('.tile')!;
+    expect(power.querySelector('.tgt')).toHaveTextContent('Target 180 W');
+    expect(power.querySelector('.tgt')).toHaveClass('low');                  // 150 W vs 180 W
+    expect(screen.getByText('Cadence').closest('.tile')!.querySelector('.tgt')).toHaveClass('ok');
+    expect(screen.getByText('Heart rate').closest('.tile')!.querySelector('.tgt')).toHaveTextContent('150 bpm');
+    expect(screen.getByText('Speed').closest('.tile')!.querySelector('.tgt')).toBeNull();   // no speed target
+  });
+
+  it('no targets without a workout or before Start', async () => {
+    await renderApp(recording(), ride(Array(40).fill(150)));
+    expect(document.querySelector('.hero .tgt')).toBeNull();
+    sweetSpot();
+    await renderApp(status(), ride([]));
+    expect(document.querySelector('.hero .tgt')).toBeNull();
+  });
+});
+
 describe('finished', () => {
   it('shows the saved file, Resume and the Send buttons', async () => {
     const user = await renderApp(finished(), ride(Array(90).fill(200)));
@@ -154,6 +203,7 @@ describe('finished', () => {
   it('shows the ride summary', async () => {
     await renderApp(finished(), ride(Array(120).fill(180)));
     expect(screen.getByText('Avg power · ride')).toBeInTheDocument();
+    expect(screen.getByText('Calories').closest('.tile')).toHaveTextContent('27kcal22 kJ of work');
     expect(screen.getByText('Best 1 min').closest('.tile')).toHaveTextContent('180W');
   });
 });
