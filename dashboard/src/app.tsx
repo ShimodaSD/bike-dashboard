@@ -3,6 +3,7 @@
 //                 live (instant numbers on every trainer packet; ?live=2 caps it at 2/s)
 //   POST /lap     start a new lap
 //   POST /start, /finish   begin / end a recorded ride
+//   POST /pause?on=1|0     pause / resume the ride in progress (timer and workout stop)
 //   POST /devices/scan, /devices/use|search|off?role=trainer|hr   device panel
 //   POST /control?on=1|0, /control/grade?pct=, /control/power?w=   trainer control (control/climb.jsx)
 //   POST /ftp-test/start|cancel|delete   guided FTP test and its saved results (ftp/ftp.tsx)
@@ -15,13 +16,13 @@
 // rendering. Effects are kept for real outside systems only: feeding the uPlot charts, document key
 // and focus handling, the device scan while that panel is open, and the trainer / audio.
 import { memo, useState, useEffect, useRef, useMemo, useCallback, type CSSProperties, type ReactNode } from 'react';
-import { WorkoutBand, WorkoutSettings, workoutAt } from './workout/workout';
+import { WorkoutBand, WorkoutSettings, workoutAt, tileTargets, type TileTarget, type TileTargets } from './workout/workout';
 import { ClimbBand, useWorkoutControl, controlKey } from './control/climb';
 import { ClimbFeel } from './control/climb-feel';
 import { useLiveFeed, type LiveNow, type RecentPower } from './hooks/feed';
 import { useStored } from './hooks/stored';
 import { useArmed, useEvent } from './hooks/hooks';
-import { ZONES, nz, fmtT, zoneOf, stats, bestPower, tssOf, fmtTss, avg3, livePower, type RideStats } from './util/ride';
+import { ZONES, nz, fmtT, zoneOf, stats, bestPower, tssOf, fmtTss, avg3, livePower, kcalOf, type RideStats } from './util/ride';
 import { Charts } from './charts/charts';
 import { RideReview } from './review/review-panel';
 import { TimeInZone } from './review/zones';
@@ -97,7 +98,10 @@ const Logo = () => (
 
 const Kbd = ({ k }: { k: string }) => <kbd aria-hidden="true">{k}</kbd>;
 
-interface Actions { finishArmed: boolean; startArmed: boolean; lap: () => void; finish: () => void; start: () => void }
+interface Actions {
+  finishArmed: boolean; startArmed: boolean; paused: boolean;
+  lap: () => void; finish: () => void; start: () => void; pause: () => void;
+}
 interface HeaderProps {
   status: Partial<Status>; ride: Partial<RideStatus>; act: Actions; panel: Panel | null; toggle: (p: Panel) => void;
 }
@@ -119,6 +123,8 @@ export function Header({ status, ride, act, panel, toggle }: HeaderProps) {
       <div className="controls">
         {recording ? <>
           <button className="primary lap" onClick={act.lap} aria-keyshortcuts="L">Lap <Kbd k="L" /></button>
+          <button className={'pause' + (act.paused ? ' on' : '')} onClick={act.pause} aria-keyshortcuts="P"
+                  aria-pressed={act.paused}>{act.paused ? 'Resume' : 'Pause'} <Kbd k="P" /></button>
           <button className={armedCls(act.finishArmed, 'finish')} onClick={act.finish} aria-keyshortcuts="F">
             {act.finishArmed ? `${PRESS} again to finish` : <>Finish <Kbd k="F" /></>}</button>
         </> : <button className={armedCls(act.startArmed, 'start')} onClick={act.start} aria-keyshortcuts="S">
@@ -268,7 +274,7 @@ export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmo
         <span className="flabel">Tips</span>
         <p className="help">Garmin watch heart rate: turn on <b>Broadcast Heart Rate</b> on the watch.
           Close Zwift and the ThinkRider app first: the trainer and the watch accept one connection at a time.
-          <span className="keys"> Keys: <Kbd k="S" /> start, <Kbd k="L" /> lap, <Kbd k="F" /> twice to finish,
+          <span className="keys"> Keys: <Kbd k="S" /> start, <Kbd k="L" /> lap, <Kbd k="P" /> pause / resume, <Kbd k="F" /> twice to finish,
           <Kbd k="−" /> <Kbd k="+" /> grade (Trainer control on).</span></p>
       </div>
     </section>
@@ -410,11 +416,12 @@ export function Devices({ status, recording }: { status: Partial<Status>; record
 interface TileProps {
   label: ReactNode; keyColor?: string; value: ReactNode; unit?: string; sub?: ReactNode;
   className?: string; badge?: ReactNode; style?: CSSProperties; children?: ReactNode;
+  target?: ReactNode;                               // the workout's target now (TargetChip)
 }
-function Tile({ label, keyColor, value, unit, sub, className = '', badge, style, children }: TileProps) {
+function Tile({ label, keyColor, value, unit, sub, className = '', badge, style, children, target }: TileProps) {
   return (
     <div className={'tile ' + className} style={style}>
-      <div className="label">{keyColor && <span className="key" style={{ background: `var(${keyColor})` }} />}{label}{badge}</div>
+      <div className="label">{keyColor && <span className="key" style={{ background: `var(${keyColor})` }} />}{label}{badge}{target}</div>
       <div className="value">{value}{unit && <span className="unit">{unit}</span>}</div>
       {sub !== undefined && <div className="sub">{sub || ' '}</div>}
       {children}
@@ -422,15 +429,30 @@ function Tile({ label, keyColor, value, unit, sub, className = '', badge, style,
   );
 }
 
+// The workout's target for a live tile: green when on it, amber with an arrow when off
+// (same tolerances as the workout band's beep), plain in a step's first seconds or while paused.
+const TARGET_TXT: Record<TileTarget['state'], string> = { low: 'below target', high: 'above target', ok: 'on target', wait: '' };
+function TargetChip({ t, digits = 0, extra }: { t?: TileTarget; digits?: number; extra?: string }) {
+  if (!t && !extra) return null;
+  const state = t?.state ?? 'wait';
+  return (
+    <span className={'tgt ' + state} title={TARGET_TXT[state] || undefined}>
+      {state === 'low' ? '↑ ' : state === 'high' ? '↓ ' : ''}<span className="tw">Target </span>
+      {t && <><b>{t.v.toFixed(digits)}</b> {t.unit}</>}{t && extra ? ' · ' : ''}{extra}
+      {TARGET_TXT[state] && <span className="sr-only">, {TARGET_TXT[state]}</span>}
+    </span>);
+}
+
 // Recording: live ride.  Ready: live preview (nothing saved).  Finished: the ride's summary.
+// Paused: still recording, but the numbers are the live preview and the timer waits.
 interface HeroProps {
   hist: Sample[]; laps: number[]; st: RideStats; ftp: number; preview: LiveValues | null; mode: Mode;
-  now: LiveNow | null; recent: RecentPower[]; smooth: number;
+  now: LiveNow | null; recent: RecentPower[]; smooth: number; paused: boolean; targets: TileTargets;
 }
-function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth }: HeroProps) {
+function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth, paused, targets }: HeroProps) {
   const done = mode === 'finished' && hist.length > 0;
   const fresh = now && Date.now() - now.at < FRESH_MS;
-  const live: LiveValues[] = fresh ? [now] : mode === 'recording' ? hist : preview ? [preview] : [];
+  const live: LiveValues[] = fresh ? [now] : mode === 'recording' && !paused ? hist : preview ? [preview] : [];
   const last = live[live.length - 1];
   const p = done ? st.avgP : fresh ? livePower(now, recent, smooth) : avg3(live);
   const zi = p != null && p > 0 ? zoneOf(p, ftp) : -1;
@@ -439,32 +461,34 @@ function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth }: HeroP
   // current lap at a glance: number, time and average power so far
   const lapStart = laps[laps.length - 1] || 0, lapRows = hist.slice(lapStart);
   const lapAvg = lapRows.length ? lapRows.reduce((t, s) => t + (s.power_w || 0), 0) / lapRows.length : null;
-  const timeBadge = mode === 'recording' ? <span className="badge rec">REC</span>
+  const timeBadge = paused ? <span className="badge paused">Paused</span>
+                  : mode === 'recording' ? <span className="badge rec">REC</span>
                   : mode === 'finished' ? <span className="badge done">Finished</span>
                   : null;   // the strip above already says Preview
   return (
     <section className={'hero ' + mode}>
       <Tile className={'power' + (zi >= 0 ? ' zoned' : '')} style={zi >= 0 ? ({ '--zc': `var(--z${zi + 1})` } as CSSProperties) : undefined} label={done ? 'Avg power · ride' : smooth ? `Power · ${smooth} s` : 'Power'} keyColor="--power" value={r0(p)} unit="W"
+            target={<TargetChip t={targets.power_w} extra={targets.grade != null ? `${targets.grade} % grade` : undefined} />}
             sub={done ? <>{zoneTxt}{last ? <span className="live-now">now {r0(avg3(live))} W</span> : null}</>
                       : !last ? '' : p != null && p > 0 ? zoneTxt : 'Not pedaling'}>
         <div className="zonebar" aria-hidden="true">
           {ZONES.map((zz, i) => <span key={zz.n} className={i === zi ? 'on' : ''} style={{ background: `var(--z${i + 1})` }} />)}
         </div>
       </Tile>
-      <Tile className={'time ' + mode} label="Ride time" badge={timeBadge}
+      <Tile className={'time ' + mode + (paused ? ' paused' : '')} label="Ride time" badge={timeBadge}
             value={mode === 'ready' ? '0:00' : fmtT(hist.length)}
-            sub={mode === 'ready' ? 'Press Start to record' : `moving ${fmtT(st.moving)}`}>
+            sub={mode === 'ready' ? 'Press Start to record' : paused ? 'Timer stopped · press Resume' : `moving ${fmtT(st.moving)}`}>
         {mode === 'recording' && <div className="lapnow" aria-label="Current lap">
           <b>Lap {laps.length}</b><span>{fmtT(lapRows.length)}</span><span>{r0(lapAvg)} W avg</span></div>}
       </Tile>
-      <Tile label={done ? 'Avg cadence' : 'Cadence'} keyColor="--cadence" unit="rpm"
+      <Tile label={done ? 'Avg cadence' : 'Cadence'} keyColor="--cadence" unit="rpm" target={<TargetChip t={targets.cadence_rpm} />}
             value={done ? r0(st.avgCad) : last ? r0(last.cadence_rpm) : '–'}
             sub={!done && mode === 'recording' && st.avgCad ? `avg ${Math.round(st.avgCad)}` : ''} />
-      <Tile label={done ? 'Avg speed' : 'Speed'} keyColor="--speed" unit="km/h"
+      <Tile label={done ? 'Avg speed' : 'Speed'} keyColor="--speed" unit="km/h" target={<TargetChip t={targets.speed_kmh} digits={1} />}
             value={done ? (st.avgSpd ? st.avgSpd.toFixed(1) : '–') : last && nz(last.speed_kmh) ? last.speed_kmh.toFixed(1) : '–'}
             sub={mode === 'recording' && st.avgSpd ? `avg ${st.avgSpd.toFixed(1)}`
                  : last && !nz(last.speed_kmh) && !done ? 'Trainer sends no speed' : ''} />
-      <Tile label={done ? 'Avg heart rate' : 'Heart rate'} keyColor="--hr" unit="bpm"
+      <Tile label={done ? 'Avg heart rate' : 'Heart rate'} keyColor="--hr" unit="bpm" target={<TargetChip t={targets.heart_rate_bpm} />}
             value={done ? r0(st.avgHr) : last ? r0(last.heart_rate_bpm) : '–'}
             sub={done ? (st.maxHr ? `max ${st.maxHr}` : 'No HR data')
                  : !last ? '' : mode === 'recording' && st.avgHr ? `avg ${Math.round(st.avgHr)} · max ${st.maxHr}`
@@ -489,8 +513,8 @@ const Stats = memo(function Stats({ hist, st, ftp, kg, more, setMore, mode }: St
   const avgP = <Tile key="avg" label="Avg power" value={r0(st.avgP)} unit="W" />;
   const maxP = <Tile key="max" label="Max power" value={r0(st.maxP)} unit="W" />;
   const dist = <Tile key="dist" label="Distance" value={(st.dist / 1000).toFixed(2)} unit="km" />;
-  // ~1 kJ of work ≈ 1 kcal burned (≈24 % gross efficiency), so one number covers both
-  const kj = <Tile key="kj" label="Energy" value={Math.round(st.kj)} unit="kJ" sub="≈ kcal burned" />;
+  // calories burned (kcalOf: ~19 % gross efficiency); the work at the pedals stays below
+  const kj = <Tile key="kj" label="Calories" value={Math.round(kcalOf(st.kj))} unit="kcal" sub={`${Math.round(st.kj)} kJ of work`} />;
   const tssT = <Tile key="tss" label="TSS" value={fmtTss(tss)} sub="training stress" />;
   const ifT = <Tile key="if" label="Intensity factor" value={IF ? IF.toFixed(2) : '–'} sub="NP ÷ FTP" />;
   const wkg = <Tile key="wkg" label="W/kg" value={kg ? (p3 / kg).toFixed(2) : '–'} sub={kg ? `at ${kg} kg` : 'Set weight in Settings'} />;
@@ -568,8 +592,10 @@ export function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownloa
   const dir = ride.dir ? `${ride.dir}/` : 'the ride folder';
   let cls = 'ready', body: ReactNode;
   if (ride.state === 'recording') {
-    cls = 'rec';
-    body = <><span className="badge rec">REC</span>
+    cls = ride.paused ? 'rec paused' : 'rec';
+    body = ride.paused ? <><span className="badge paused">Paused</span>
+      <span>{ftpTest ? 'FTP test' : 'Ride'} {ride.n || 1} paused · the timer{ftpTest ? ', the test' : ''} and the workout wait. Nothing is recorded until you press <b>Resume</b>.</span></>
+      : <><span className="badge rec">REC</span>
       <span>Recording {ftpTest ? 'FTP test' : 'ride'} {ride.n || 1} · saved every second to <b>{dir}</b></span>
       {lapFlash ? <span className="flash">Lap {lapFlash} started</span> : null}</>;
   } else if (ride.state === 'finished' && ride.fit) {
@@ -625,6 +651,7 @@ export function App() {
   const { hist, laps, status, online, version, preview, now, recent } = useLiveFeed(rate);
   const ride: Partial<RideStatus> = status.ride || {};
   const mode: Mode = ride.state === 'recording' ? 'recording' : ride.state === 'finished' ? 'finished' : 'ready';
+  const paused = mode === 'recording' && !!ride.paused;
   const [ftp, setFtp] = useStored('ftp', 200);    // FTP and weight stay in this browser
   const [kg, setKg] = useStored<number | null>('kg', null);
   const [win, setWin] = useStored('win', 1200);
@@ -672,8 +699,9 @@ export function App() {
   }, [mode]);
 
   const act: Actions = {
-    finishArmed, startArmed,
+    finishArmed, startArmed, paused,
     lap: postLap,
+    pause: () => post(`/pause?on=${paused ? 0 : 1}`),
     finish: () => pressFinish(() => post('/finish')),
     start: () => {
       if (route === 'rides') window.location.hash = '';   // a new ride: back to the live numbers
@@ -704,6 +732,7 @@ export function App() {
     const key = e.key.toLowerCase();
     if (key === 'l' && mode === 'recording') act.lap();
     else if (key === 'f' && mode === 'recording') act.finish();
+    else if (key === 'p' && mode === 'recording') act.pause();
     else if (key === 's' && mode !== 'recording') act.start();
     else controlKey(e, ctl);
   });
@@ -712,8 +741,15 @@ export function App() {
     return () => document.removeEventListener('keydown', onKey);
   }, [onKey]);
 
-  // live numbers for the workout band: the latest packet while fresh, else the last second
+  // live numbers for the workout band and the tiles' targets: the latest packet while fresh, else the last second
   const fresh = now && Date.now() - now.at < FRESH_MS, last = hist.length ? hist[hist.length - 1] : null;
+  const reading = {
+    power: fresh ? livePower(now, recent, 3) : last ? avg3(hist) : null,
+    cadence: fresh ? now.cadence_rpm : last ? last.cadence_rpm : null,
+    hr: fresh ? now.heart_rate_bpm : last ? last.heart_rate_bpm : null,
+    speed: fresh ? now.speed_kmh : last ? last.speed_kmh : null,
+  };
+  const targets = tileTargets(woAt, reading.power, reading.cadence, reading.hr, reading.speed, paused);
 
   return (
     <div className="wrap">
@@ -734,15 +770,11 @@ export function App() {
       {ftpStatus && ftpRun && mode !== 'ready' && <FtpTestBand ftpStatus={ftpStatus} hist={hist} mode={mode} ftp={ftp} setFtp={setFtp} />}
       {showCtl && <ClimbBand ctl={ctl} ftp={ftp} follow={woDrives} />}
       {activeWo && mode !== 'finished' ? <WorkoutBand wo={activeWo} t={Math.max(0, hist.length - (testing ? ftpRun?.t0 ?? 0 : 0))} mode={mode} ftp={ftp} sound={woSound}
-                            onRemove={testing ? undefined : () => setWo(null)}
-                            power={fresh ? livePower(now, recent, 3) : last ? avg3(hist) : null}
-                            cadence={fresh ? now.cadence_rpm : last ? last.cadence_rpm : null}
-                            hr={fresh ? now.heart_rate_bpm : last ? last.heart_rate_bpm : null}
-                            speed={fresh ? now.speed_kmh : last ? last.speed_kmh : null} /> : null}
+                            onRemove={testing ? undefined : () => setWo(null)} paused={paused} {...reading} /> : null}
       {mode === 'finished' && hist.length > 0 && <RideReview hist={hist} st={st} ftp={ftp} workout={wo} woStart={0} ftpTest={!!ftpRun}
                                                                    coach={online ? status.coach : undefined} laps={laps} source="live" />}
-      <Hero hist={hist} laps={laps} st={st} ftp={ftp} preview={mode === 'recording' ? null : preview} mode={mode}
-            now={now} recent={recent} smooth={smooth} />
+      <Hero hist={hist} laps={laps} st={st} ftp={ftp} preview={mode === 'recording' && !paused ? null : preview} mode={mode}
+            now={now} recent={recent} smooth={smooth} paused={paused} targets={targets} />
       <Stats hist={hist} st={st} ftp={ftp} kg={kg} more={more} setMore={setMore} mode={mode} />
       <section className="main">
         <Charts hist={hist} laps={laps} ftp={ftp} win={win} setWin={setWin} version={version}

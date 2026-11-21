@@ -118,7 +118,10 @@ Close Zwift / the ThinkRider app first: the trainer usually allows only one Blue
 Press **Start** on the dashboard to begin recording and **Finish** to end the ride
 (press it twice, at least half a second apart, so a stray click or a double tap can't end
 it). Ended too soon? **Resume ride** on the finished screen carries on with the same ride and
-writes the .FIT again. Before Start the dashboard shows live numbers but saves nothing. Use `--autostart` to record straight away.
+writes the .FIT again. **Pause** (or <kbd>P</kbd>) stops the ride timer mid-ride: nothing is
+recorded, so averages, distance and calories skip the stop, a loaded workout waits at the
+same point of its step and the off-target beep stays quiet. **Resume** carries on; the .FIT
+marks the pause so Strava shows the right moving time. Before Start the dashboard shows live numbers but saves nothing. Use `--autostart` to record straight away.
 
 Each run is saved to `rides/x2max_YYYYMMDD_HHMMSS/`: `ride_<date>_<time>.fit` (one per ride),
 `session_1hz.csv`, `decoded.csv`, `raw_packets.csv` and `gatt_dump.json`. Ctrl+C in the
