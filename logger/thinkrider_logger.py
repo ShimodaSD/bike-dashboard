@@ -32,10 +32,11 @@ Usage
   uv run logger/thinkrider_logger.py --scan          # list nearby BLE devices
   uv run logger/thinkrider_logger.py --host 0.0.0.0  # open dashboard from a phone/tablet
                                               # on the same Wi-Fi: http://<PC-IP>:8000
+  (8000 is the default port; if another program uses it, the next free one is picked.)
   uv run logger/thinkrider_logger.py --hr-name forerunner   # pick the HR watch/strap
   uv run logger/thinkrider_logger.py --autostart     # record without pressing Start
   uv run logger/thinkrider_logger.py --fit-from rides/x2max_...   # rebuild ride.fit from a CSV
-  Other options: --name X2MAX  --address AA:BB:..  --port 8000  --out ride1
+  Other options: --name X2MAX  --address AA:BB:..  --port 8001  --out ride1
                  --duration 3600  --no-browser  --hr-address ..  --no-hr
 
 Heart rate from a watch: on a Garmin Forerunner 165 turn on Broadcast Heart
@@ -1504,6 +1505,55 @@ async def demo_hr(live: Live, devices: Devices):
 # --------------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------------
+DEFAULT_PORT = 8000
+
+
+def port_in_use(host, port):
+    """True if something already answers on `port` or would stop us binding it.
+
+    Binding 127.0.0.1 alone is not enough: on macOS that succeeds even while a Docker
+    container listens on *:8000, and the browser's http://localhost:8000 then reaches the
+    container ({"detail":"Not Found"}). So also try to connect on IPv4 and IPv6 loopback
+    and to bind the wildcard address. SO_REUSEADDR so the leftovers of a logger that just
+    stopped (TIME_WAIT) don't push us off 8000: a different port means a different origin,
+    and the browser's saved FTP / weight / workout belong to the old one."""
+    for family, addr in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as s:
+                s.settimeout(0.3)
+                if s.connect_ex((addr, port)) == 0:
+                    return True
+        except OSError:
+            pass                              # no IPv6 here
+    wildcard = "0.0.0.0" if host in ("127.0.0.1", "localhost", "0.0.0.0") else host
+    try:
+        family = socket.AF_INET6 if ":" in wildcard else socket.AF_INET
+        with socket.socket(family, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((wildcard, port))
+    except OSError:
+        return True
+    return False
+
+
+def pick_port(host, port=None, tries=20):
+    """The port to serve the dashboard on. An explicit --port is used as given (with a
+    clear error if it is taken); otherwise DEFAULT_PORT, or the next free port after it."""
+    if port is not None:
+        if port and port_in_use(host, port):
+            raise OSError(f"Port {port} is already in use (another logger, or e.g. a Docker "
+                          f"container). Leave out --port to pick a free one, or choose another.")
+        return port
+    for p in range(DEFAULT_PORT, DEFAULT_PORT + tries):
+        if not port_in_use(host, p):
+            if p != DEFAULT_PORT:
+                print(f"Port {DEFAULT_PORT} is already in use by another program, "
+                      f"so the dashboard is on port {p}.")
+            return p
+    raise OSError(f"Ports {DEFAULT_PORT} to {DEFAULT_PORT + tries - 1} are all in use. "
+                  "Pass a free one with --port.")
+
+
 async def main_async(args):
     global BLE_LOCK
     BLE_LOCK = asyncio.Lock()
@@ -1608,13 +1658,20 @@ def main():
                    help="seconds to run, recording from the start (0 = until Ctrl+C)")
     p.add_argument("--scan-time", type=float, default=8, help="scan timeout in seconds")
     p.add_argument("--host", default="127.0.0.1", help="use 0.0.0.0 to view from phone/tablet")
-    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--port", type=int, default=None,
+                   help=f"dashboard port (default: {DEFAULT_PORT}, or the next free one if "
+                   "something else, e.g. a Docker container, already uses it)")
     p.add_argument("--no-browser", action="store_true", help="don't open the dashboard automatically")
     p.add_argument("--out", default=os.path.join(ROOT, "rides", datetime.now().strftime("x2max_%Y%m%d_%H%M%S")),
                    help="output folder")
     args = p.parse_args()
     if args.fit_from:
         return fit_from_csv(args.fit_from)
+    if not args.scan:
+        try:
+            args.port = pick_port(args.host, args.port)
+        except OSError as e:
+            sys.exit(str(e))
     if BleakScanner is None and not args.demo:
         sys.exit("bleak is not installed. Run with:  uv run logger/thinkrider_logger.py   (or try --demo)")
     try:
