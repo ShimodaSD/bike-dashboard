@@ -3,8 +3,8 @@ recent Garmin rides for context (training load, how this ride compares, what to 
 
 Optional and on request only: nothing is sent until you press "Ask Claude" on the dashboard.
 What is sent to Anthropic: the ride's summary numbers (averages, zones, laps, a 1-minute
-power / heart-rate profile, the local review's notes) and, with Garmin set up, your last six
-weeks of Garmin activity summaries and last week's sleep and HRV summaries.
+power / heart-rate profile, the local review's notes, your weight and W/kg if set) and,
+with Garmin set up, your last six weeks of Garmin activity summaries and last week's sleep and HRV summaries.
 Not sent: the raw recording, files, your name or location.
 
 Needs ANTHROPIC_API_KEY in .env (see env.py). Garmin context needs GARMIN_API_KEY
@@ -33,7 +33,9 @@ You get JSON with:
   average / normalized / best powers, intensity factor (IF), TSS, variability (VI), heart rate,
   time in each power zone, laps, the two halves compared, heart-rate drift (Pw:HR) when it could be
   judged, the workout's targets and misses if one was followed, and a 1-minute profile of power,
-  heart rate and cadence.
+  heart rate and cadence. With the rider's weight set it also has weight_kg, W/kg figures and
+  their level on Coggan's power profile (ftp_level, best_wkg). Use W/kg to
+  judge the efforts; don't advise the rider to lose or gain weight.
 - "local_review": the notes the dashboard already shows (ride type, load, drift, pacing, workout).
 - "garmin": from the rider's Garmin account (any part may be empty): "activities" = the last six
   weeks of activities, newest first, all sports (TSS / IF only where Garmin had power); "sleep" and

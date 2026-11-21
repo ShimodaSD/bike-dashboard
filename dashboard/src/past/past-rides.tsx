@@ -4,7 +4,7 @@
 // file from this computer. Requests run from the click handlers; nothing is saved.
 import { useRef, useState } from 'react';
 import type { CoachStatus, GarminRide } from '../types/coach';
-import { FileResult, ReviewFile } from '../import/review-file';
+import { FileResult, ReviewFile, type Rider } from '../import/review-file';
 import { parseFit, toRide, type RideFile } from '../import/ridefile';
 
 export interface ListedRide extends GarminRide { id: number; distance_km: number | null; avg_hr: number | null }
@@ -22,7 +22,7 @@ const fmtDay = (local: string | null) => {
   return Number.isNaN(+d) ? local : d.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 };
 
-export function PastRides({ ftp, coach }: { ftp: number; coach?: CoachStatus }) {
+export function PastRides({ rider, coach }: { rider: Rider; coach?: CoachStatus }) {
   const [list, setList] = useState<List>({ state: 'idle' });
   const [picked, setPicked] = useState<Picked | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
@@ -87,14 +87,14 @@ export function PastRides({ ftp, coach }: { ftp: number; coach?: CoachStatus }) 
               </ul>}
           <details className="pl-file">
             <summary>Or review a ride file from this computer</summary>
-            <ReviewFile ftp={ftp} coach={coach} />
+            <ReviewFile rider={rider} coach={coach} />
           </details>
         </div>
         <div className="past-result" ref={resultRef}>
           {!picked ? <p className="past-empty">Pick a ride to see its review.</p>
             : picked.state === 'loading' ? <p className="past-empty" role="status">Downloading the ride from Garmin…</p>
             : picked.state === 'error' ? <p className="note err" role="alert">{picked.msg}</p>
-            : <div className="review-file"><FileResult ride={picked.ride} ftp={ftp} coach={coach} /></div>}
+            : <div className="review-file"><FileResult ride={picked.ride} rider={rider} coach={coach} /></div>}
         </div>
       </div>
     </section>

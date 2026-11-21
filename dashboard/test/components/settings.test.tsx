@@ -13,8 +13,9 @@ function Harness({ recording = false, canCsv = true, onCsv = () => {} }) {
   const [ftp, setFtp] = useState(200), [kg, setKg] = useState<number | null>(null);
   const [smooth, setSmooth] = useState(0), [liveRate, setLiveRate] = useState<'auto' | 'fast' | 'saver'>('auto');
   const [wo, setWo] = useState<Workout | null>(null), [sound, setSound] = useState(true);
+  const [sex, setSex] = useState<'m' | 'f'>('m');
   return <>
-    <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} smooth={smooth} setSmooth={setSmooth}
+    <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} sex={sex} setSex={setSex} smooth={smooth} setSmooth={setSmooth}
               liveRate={liveRate} setLiveRate={setLiveRate} onCsv={onCsv} canCsv={canCsv} recording={recording}
               workout={{ wo, setWo, sound, setSound }} />
     <output data-testid="saved">{JSON.stringify({ ftp, kg, smooth, liveRate, wo: wo?.name ?? null, steps: wo?.segs.length, sound })}</output>
@@ -69,6 +70,22 @@ describe('weight', () => {
     await user.clear(kg);
     await user.tab();
     expect(kg).toHaveAttribute('aria-invalid', 'false');
+  });
+
+  it("shows FTP in W/kg with its level on Coggan's power profile, per table", async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<Harness />);
+    expect(screen.queryByText(/W\/kg ·/)).toBeNull();                  // no weight: nothing to rate
+    await user.type(screen.getByLabelText('Weight'), '70');
+    await user.tab();
+    // 200 W / 70 kg = 2.86 W/kg: Moderate (Cat 4) on both tables; 210 W = 3.00 is Good (Cat 3) for women
+    expect(screen.getByText('2.86 W/kg')).toBeInTheDocument();
+    expect(screen.getByText('Moderate (Cat 4)')).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('Power profile'), "Women's table");
+    expect(screen.getByText('Moderate (Cat 4)')).toBeInTheDocument();
+    await user.clear(screen.getByLabelText('FTP'));
+    await user.type(screen.getByLabelText('FTP'), '210{Enter}');      // 3.00 W/kg
+    expect(screen.getByText('Good (Cat 3)')).toBeInTheDocument();
   });
 });
 

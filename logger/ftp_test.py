@@ -108,11 +108,11 @@ class FtpTests:
             self.live.broadcast("status", self.live.status)
 
     # -- buttons -----------------------------------------------------------
-    def start(self, ftp_before=None):
-        """Start FTP test: a new ride with the test from its first second."""
+    def start(self, ftp_before=None, kg=None):
+        """Start FTP test: a new ride with the test from its first second (kg: rider weight)."""
         if self.live.recording:
             return False
-        self.live.start_ride()                 # calls on_ride_start(), which clears an old test
+        self.live.start_ride(kg)                 # calls on_ride_start(), which clears an old test
         self.test = {"state": "running", "t0": 0, "ftp_before": ftp_before, "result": None}
         print("FTP test started")
         self._publish()

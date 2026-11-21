@@ -15,7 +15,8 @@ import type { Workout } from '../types/workout';
 const post = (path: string) => fetch(path, { method: 'POST' }).catch(() => {});
 const PRESS = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches ? 'Tap' : 'Click';
 
-export const startFtpTest = (ftp: number) => post(`/ftp-test/start?ftp=${Math.round(ftp)}`);
+export const startFtpTest = (ftp: number, kg: number | null = null) =>
+  post(`/ftp-test/start?ftp=${Math.round(ftp)}${kg ? `&kg=${kg}` : ''}`);
 export const cancelFtpTest = () => post('/ftp-test/cancel');
 export const deleteFtpResult = (id: string) => post(`/ftp-test/delete?id=${encodeURIComponent(id)}`);
 

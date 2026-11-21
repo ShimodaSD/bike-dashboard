@@ -41,6 +41,13 @@ describe('Start and Finish', () => {
     expect(posted()).toContain('/start');
   });
 
+  it('Start sends the weight from Settings, so it is saved with the ride', async () => {
+    localStorage.setItem('x2max.kg', '72.5');
+    const user = await renderApp();
+    await user.click(screen.getByRole('button', { name: /^Start/ }));
+    expect(posted()).toContain('/start?kg=72.5');
+  });
+
   it('Finish needs a second press, not a double tap, within 4 s', async () => {
     const user = await renderApp(recording(), ride([200, 210, 220]));
     const finish = () => screen.getByRole('button', { name: /finish/i });
@@ -165,6 +172,25 @@ describe('ride review', () => {
     expect(within(review).getByText('Tempo ride')).toBeInTheDocument();
     expect(review).toHaveTextContent('Moderate load');
     expect(review).toHaveTextContent('Heart rate held');
+  });
+
+  it("rates the ride's peaks in W/kg with the weight saved with the ride", async () => {
+    localStorage.setItem('x2max.kg', '90');                         // changed since: the ride keeps 75 kg
+    const st = finished();
+    await renderApp({ ...st, ride: { ...st.ride, kg: 75 } }, ride(Array(1500).fill(300)));
+    const review = screen.getByRole('region', { name: 'Ride review' });
+    expect(review).toHaveTextContent('Power profile at 75 kg, saved with this ride');
+    const peak = (label: string) => within(review).getByText(label).closest('div')!;
+    expect(peak('Best 5 min')).toHaveTextContent('4.00 W/kg300 W · Cat 4');      // men's 5 min: Moderate ≥ 3.46
+    expect(peak('Best 20 min')).toHaveTextContent('4.00 W/kg300 W · Cat 3');     // as FTP: 3.80 W/kg, Good ≥ 3.38
+    expect(peak('Normalized')).toHaveTextContent('4.00 W/kgavg 4.00 · 6.0 kJ/kg');
+  });
+
+  it('without a weight the peaks are in watts, with a pointer to Settings', async () => {
+    await renderApp(finished(), ride(Array(600).fill(200)));
+    const review = screen.getByRole('region', { name: 'Ride review' });
+    expect(within(review).getByText('Best 5 min').closest('div')).toHaveTextContent('200 W');
+    expect(review).toHaveTextContent('Set your weight in Settings to see W/kg');
   });
 
   it('reviews a ride file without touching the live ride', async () => {

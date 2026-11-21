@@ -40,6 +40,7 @@ export interface RideStatus {
   n: number;                         // ride number since the logger started
   fit: string | null;                // the finished ride's .FIT file name
   dir: string;                       // ride folder name
+  kg?: number | null;                // rider weight saved with this ride (sent with Start)
 }
 
 // Device panel: what each role connects to.

@@ -3,6 +3,7 @@
 import type { Sample } from '../types/feed';
 import { ZONES, bestPower, stats, type RideStats } from '../util/ride';
 import type { Review } from './review';
+import { levelOf, peaksOf, wkgOf, type ProfileSex } from '../util/profile';
 
 const r = (v: number | null | undefined, nd = 0) => (v == null || !Number.isFinite(v) ? null : +v.toFixed(nd));
 const avgOf = (a: number[]) => (a.length ? a.reduce((t, x) => t + x, 0) / a.length : null);
@@ -21,9 +22,11 @@ function profile(hist: Sample[]) {
 
 export interface SummaryInput {
   hist: Sample[]; st: RideStats; ftp: number; review: Review; laps?: number[]; source: 'live' | 'file'; name?: string;
+  kg?: number | null; sex?: ProfileSex;
 }
 
-export function rideSummary({ hist, st, ftp, review, laps = [0], source }: SummaryInput) {
+export function rideSummary({ hist, st, ftp, review, laps = [0], source, kg = null, sex = 'm' }: SummaryInput) {
+  const ftpWkg = wkgOf(ftp, kg);
   const half = Math.floor(hist.length / 2);
   const h1 = stats(hist.slice(0, half), ftp, null), h2 = stats(hist.slice(half), ftp, half > 0 ? hist[half - 1] : null);
   const lapRows = laps.slice(0, 30).map((start, i) => {
@@ -38,6 +41,12 @@ export function rideSummary({ hist, st, ftp, review, laps = [0], source }: Summa
       start: hist[0]?.timestamp_utc ?? null,
       duration_min: r(hist.length / 60, 1), moving_min: r(st.moving / 60, 1),
       ftp_w: ftp,
+      weight_kg: kg ?? undefined,
+      ftp_wkg: r(ftpWkg, 2) ?? undefined,
+      ftp_level: ftpWkg != null ? levelOf('ft', ftpWkg, sex) : undefined,
+      best_wkg: kg ? Object.fromEntries(peaksOf(sec => bestPower(hist, sec), kg, sex).filter(p => p.w)
+        .map(p => [p.label.replace(' ', ''), { wkg: r(p.wkg, 2), level: p.level }])) : undefined,
+      avg_wkg: r(wkgOf(st.avgP, kg), 2) ?? undefined, np_wkg: r(wkgOf(st.np, kg), 2) ?? undefined,
       avg_w: r(st.avgP), np_w: r(st.np), max_w: r(st.maxP),
       best_w: { '1min': r(bestPower(hist, 60)), '5min': r(bestPower(hist, 300)), '20min': r(bestPower(hist, 1200)) },
       if: r(review.IF, 2), tss: r(review.tss), vi: r(review.VI, 2),
