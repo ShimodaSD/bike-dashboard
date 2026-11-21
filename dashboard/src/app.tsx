@@ -718,7 +718,7 @@ export function App() {
                                  workout={{ wo, setWo, sound: woSound, setSound: setWoSound }}
                                  ftpTest={{ ftpStatus, ftp, setFtp, recording: mode === 'recording', startArmed: testArmed, onStart: startTest }} /></Drawer>}
       {panel === 'review' && <Drawer id="review-file" title="Review a ride file" onClose={closePanel} wide>
-        <ReviewFile ftp={ftp} /></Drawer>}
+        <ReviewFile ftp={ftp} coach={online ? status.coach : undefined} /></Drawer>}
       {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
       <RideStrip ride={ride} seconds={hist.length} startArmed={startArmed} lapFlash={lapFlash}
@@ -732,7 +732,8 @@ export function App() {
                             cadence={fresh ? now.cadence_rpm : last ? last.cadence_rpm : null}
                             hr={fresh ? now.heart_rate_bpm : last ? last.heart_rate_bpm : null}
                             speed={fresh ? now.speed_kmh : last ? last.speed_kmh : null} /> : null}
-      {mode === 'finished' && hist.length > 0 && <RideReview hist={hist} st={st} ftp={ftp} workout={wo} woStart={0} ftpTest={!!ftpRun} />}
+      {mode === 'finished' && hist.length > 0 && <RideReview hist={hist} st={st} ftp={ftp} workout={wo} woStart={0} ftpTest={!!ftpRun}
+                                                                   coach={online ? status.coach : undefined} laps={laps} source="live" />}
       <Hero hist={hist} laps={laps} st={st} ftp={ftp} preview={mode === 'recording' ? null : preview} mode={mode}
             now={now} recent={recent} smooth={smooth} />
       <Stats hist={hist} st={st} ftp={ftp} kg={kg} more={more} setMore={setMore} mode={mode} />

@@ -193,6 +193,47 @@ describe('ride review', () => {
   });
 });
 
+describe('Ask Claude', () => {
+  const coachOn = { ...finished(), coach: { claude: true, garmin: true, model: 'claude-opus-5-5' } };
+  const result = {
+    review: { headline: 'Solid tempo hour.', verdict: 'good', went_well: ['Even pacing'], to_improve: ['Start easier'],
+              load: 'Three rides this week, moderate load.', next_session: '60 min Z2 at 140-160 W.' },
+    recent: [{ date: '2026-11-17 18:00:00', name: 'Zwift', type: 'virtual_ride', cycling: true, duration_min: 60, tss: 55, np_w: 170 }],
+    garmin_note: null, model: 'claude-opus-5-5',
+  };
+
+  it('sends the ride summary and shows the coach\'s review', async () => {
+    const user = await renderApp(coachOn, ride(Array(3600).fill(150)));
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(result), { status: 200 }));
+    expect(screen.getByText(/Sends this ride's summary and your recent Garmin activities, sleep and HRV to Anthropic/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Ask Claude/ }));
+    const card = await screen.findByRole('region', { name: "Claude's review" });
+    expect(card).toHaveTextContent('Solid tempo hour.');
+    expect(card).toHaveTextContent('60 min Z2 at 140-160 W.');
+    expect(card).toHaveTextContent('your last 1 Garmin activity');
+    const [url, init] = vi.mocked(fetch).mock.calls.at(-1)!;
+    expect(url).toBe('/coach');
+    const sent = JSON.parse(String(init!.body));
+    expect(sent.ride).toMatchObject({ duration_min: 60, np_w: 150, ftp_w: 200, tss: 56 });
+    expect(sent.ride.profile_1min).toHaveLength(60);
+    expect(sent.local_review.kind).toBe('Tempo ride');
+  });
+
+  it('shows the logger\'s error and lets you try again', async () => {
+    const user = await renderApp(coachOn, ride(Array(600).fill(150)));
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Anthropic refused the API key.' }), { status: 503 }));
+    await user.click(screen.getByRole('button', { name: /Ask Claude/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Anthropic refused the API key.');
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled();
+  });
+
+  it('without an API key it says how to set it up and sends nothing', async () => {
+    await renderApp({ ...finished(), coach: { claude: false, garmin: false, model: 'claude-opus-5-5' } }, ride(Array(600).fill(150)));
+    expect(screen.getByText(/Add/).closest('p')).toHaveTextContent('Add ANTHROPIC_API_KEY to the .env file');
+    expect(screen.queryByRole('button', { name: /Ask Claude/ })).not.toBeInTheDocument();
+  });
+});
+
 describe('connection', () => {
   it('says when the logger is gone', async () => {
     await renderApp();

@@ -135,7 +135,18 @@ out in the browser from the ride, your FTP and the loaded workout; nothing is se
 **Review a ride file** (on the Preview strip, or Settings › Past rides) gives the same review for a
 ride you already did: a `.fit` (this logger, Garmin, Wahoo, Zwift, Strava's Export original), a
 `.tcx`, a `.gpx` with power, or this logger's `session_1hz.csv`. The file is read in the browser
-and nothing is saved; the trainer doesn't need to be on. Keys: `S` start, `L` lap, `F` twice to
+and nothing is saved; the trainer doesn't need to be on.
+**Ask Claude for a coach's review** (under the Ride review, optional) sends the ride's summary to
+Claude, with your last six weeks of Garmin activities and last week's sleep and HRV when Garmin is set
+up, and shows a coach's take: what went well, what to work on, your training load and the next
+session. Nothing is sent until you press it. Set it up in a `.env` file in the repo root (gitignored):
+
+```
+ANTHROPIC_API_KEY=sk-ant-...      # console.anthropic.com
+GARMIN_API_KEY=...                # optional: connect.garmin.com/app/settings/personalApiToken
+```
+
+Restart the logger after editing it. `uv run logger/garmin_rides.py` shows what Garmin returns. Keys: `S` start, `L` lap, `F` twice to
 finish, `Esc` closes Devices / Settings. FTP, weight, workout, CSV export and **Clear all
 data** (only between rides) are under **Settings**; FTP,
 weight and chart window are remembered in the browser.
