@@ -65,6 +65,18 @@ export function stats(a: Sample[], ftp: number, before: Sample | null): RideStat
   return out;
 }
 
+// Normalized power (Coggan): 30 s rolling average, raised to the 4th power, averaged, 4th root.
+// Full 30 s windows only, so null under 30 s (same rule as stats() and the logger's .FIT).
+export function npOf(powers: number[]): number | null {
+  if (powers.length < 30) return null;
+  let roll = 0, sum4 = 0, n4 = 0;
+  powers.forEach((p, i) => {
+    roll += p; if (i >= 30) roll -= powers[i - 30];
+    if (i >= 29) { sum4 += Math.pow(roll / 30, 4); n4++; }
+  });
+  return Math.pow(sum4 / n4, 0.25);
+}
+
 // Best average power over any `sec`-second stretch of the ride (null if the ride is shorter).
 export function bestPower(h: Sample[], sec: number) {
   if (h.length < sec) return null;
