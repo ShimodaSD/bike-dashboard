@@ -32,7 +32,8 @@ class TestSummary:
         s = tl._summary(as_rows(ride([200] * 60)))
         assert s["avg_power"] == 200 and s["max_power"] == 200
         assert s["np"] == pytest.approx(200)
-        assert s["work_j"] == 12000 and s["kcal"] == 12
+        assert s["work_j"] == 12000
+        assert s["kcal"] == pytest.approx(12 * 5.3 / 4.184)    # 12 kJ of work ~= 15.2 kcal
         assert s["avg_spd"] == pytest.approx(30 / 3.6)
 
     def test_np_needs_30_seconds(self):

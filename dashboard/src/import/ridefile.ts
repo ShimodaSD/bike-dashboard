@@ -160,11 +160,16 @@ export function parseFit(buf: ArrayBuffer): Point[] {
   return out;
 
   function dataMsg(def: FitDef, at: number, ts: number | null): number {
-    if (def.global === 3 && kg == null) {
-      for (const fd of def.fields) { if (fd.num === 4) { const w = read(at, fd.size, fd.base, def.little); if (w) kg = w / 10; } at += fd.size; }
+    if (def.global !== 20) {
+      // any message's timestamp (253) is the reference for the compressed headers that follow;
+      // user_profile (3) carries the rider's weight (4, 0.1 kg)
+      for (const fd of def.fields) {
+        if (fd.num === 253) { const x = read(at, fd.size, fd.base, def.little); if (x != null) lastTs = x; }
+        else if (def.global === 3 && fd.num === 4 && kg == null) { const w = read(at, fd.size, fd.base, def.little); if (w) kg = w / 10; }
+        at += fd.size;
+      }
       return at + def.devSize;
     }
-    if (def.global !== 20) return at + def.fields.reduce((t, f) => t + f.size, 0) + def.devSize;
     const f: Record<number, number | null> = {};
     for (const fd of def.fields) { f[fd.num] = read(at, fd.size, fd.base, def.little); at += fd.size; }
     at += def.devSize;
