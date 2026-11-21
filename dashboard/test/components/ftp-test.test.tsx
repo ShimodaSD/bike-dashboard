@@ -48,7 +48,7 @@ describe('starting a test', () => {
 
   it('over an unsaved finished ride it needs a second press', async () => {
     const user = await renderApp({ ...finished(), ftp: ftpStatus() }, ride([200, 200]));
-    await user.click(screen.getByRole('button', { name: 'Settings' }));
+    act(() => { window.location.hash = '#train'; window.dispatchEvent(new HashChangeEvent('hashchange')); });
     const start = () => screen.getByRole('button', { name: /start ftp test|again to start/i });
     await user.click(start());
     expect(start()).toHaveTextContent('Click again to start');

@@ -9,13 +9,13 @@ test.beforeEach(async ({ page, request }) => {
   await request.post('/finish');
   await request.post('/clear');
   await page.goto('/');
-  await expect(page.getByRole('button', { name: /Demo/ })).toBeVisible();      // simulated trainer is up
-  await closeDrawer(page);
+  await expect(page.getByRole('link', { name: /Demo/ })).toBeVisible();        // simulated trainer is up
+  await openPage(page, 'Live');                       // first start may show Devices instead
 });
 
-async function closeDrawer(page: Page) {
-  const close = page.getByRole('button', { name: /^Close/ });
-  if (await close.isVisible()) await close.click();
+// A tab in the page bar under the header.
+async function openPage(page: Page, name: string) {
+  await page.getByRole('navigation', { name: 'Pages' }).getByRole('link', { name: new RegExp(`^${name}`) }).click();
 }
 
 const rideTime = (page: Page) => page.locator('.tile.time .value');
@@ -92,19 +92,22 @@ test('keyboard: S, L, F F', async ({ page, isMobile }) => {
   await expect(strip(page)).toContainText('Saved on this computer');
 });
 
-test('workout: load in Settings, the band follows the ride', async ({ page }) => {
-  await page.getByRole('button', { name: 'Settings' }).click();
+test('workout: load in Training, the band follows the ride', async ({ page }) => {
+  await openPage(page, 'Training');
   await page.getByLabel('Load workout').setInputFiles(join(WORKOUTS, 'power-sweet-spot.zwo'));
   await expect(page.getByText('Power test · Sweet spot 3x3').first()).toBeVisible();
-  await closeDrawer(page);
+  await openPage(page, 'Live');
   const band = page.getByRole('region', { name: 'Workout' });
   await expect(band).toContainText('Starts when you press Start');
   await page.getByRole('button', { name: /^Start(?! FTP)/ }).click();
   await expect(band).toContainText('Step 1/8 · Warm-up');
   await expect(band).toContainText(/left/);
   await expect(page.getByRole('img', { name: /^Power over/ })).toBeVisible();
+  await openPage(page, 'Training');                   // the ride keeps going on another page
+  await expect(page.getByRole('link', { name: /^Live/ })).toContainText(/\d:\d\d/);
+  await page.keyboard.press('l');
+  await expect(page.getByRole('button', { name: /^Finish/ })).toBeVisible();
   await finish(page);
-  await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('button', { name: 'Remove' }).click();
 });
 
@@ -128,9 +131,9 @@ test('FTP test: start from the strip, the band counts down, stop keeps the ride'
   await finish(page);
 });
 
-test('FTP test: Settings has the start button and a guide for the rider', async ({ page }) => {
-  await page.getByRole('button', { name: 'Settings' }).click();
-  const settings = page.locator('#settings');
+test('FTP test: Training has the start button and a guide for the rider', async ({ page }) => {
+  await openPage(page, 'Training');
+  const settings = page.getByRole('region', { name: 'FTP test' });
   await expect(settings.getByRole('button', { name: 'Start FTP test' })).toBeEnabled();
   await expect(settings.getByText('A fan on you')).toBeHidden();
   await settings.getByText('How to get a good test').click();
@@ -138,7 +141,6 @@ test('FTP test: Settings has the start button and a guide for the rider', async 
   await expect(settings.getByText(/Start a little conservative, near your current FTP/)).toBeVisible();
   await expect(settings.getByText(/about 35 to 50 minutes/)).toBeVisible();
   await expect(settings.getByText(/Every 4 to 8 weeks/)).toBeVisible();
-  await closeDrawer(page);
 });
 
 test('trainer control: climb in demo', async ({ page }) => {
@@ -151,12 +153,12 @@ test('trainer control: climb in demo', async ({ page }) => {
   await expect(band.getByText('Off', { exact: true })).toBeVisible();
 });
 
-test('devices panel lists the demo devices', async ({ page }) => {
-  await page.getByRole('button', { name: /Devices/ }).click();
-  const panel = page.getByRole('complementary', { name: 'Devices' });
+test('devices page lists the demo devices', async ({ page }) => {
+  await page.getByRole('link', { name: /Open Devices/ }).click();
+  const panel = page.getByRole('region', { name: 'Devices' });
   await expect(panel.getByText('Forerunner 165 (demo)').first()).toBeVisible({ timeout: 8000 });
   await expect(panel.getByRole('button', { name: /Show other devices/ })).toBeVisible();
-  await page.keyboard.press('Escape');
+  await openPage(page, 'Live');
   await expect(panel).toBeHidden();
 });
 
@@ -164,6 +166,17 @@ test('the layout fits the screen', async ({ page }) => {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
   await expect(page.locator('.tile.power')).toBeInViewport();
+});
+
+test('every page fits the screen, with all its tabs in view', async ({ page }) => {
+  const nav = page.getByRole('navigation', { name: 'Pages' });
+  for (const name of ['Training', 'Past rides', 'Devices', 'Settings', 'Live']) {
+    await openPage(page, name);
+    await expect(nav.getByRole('link', { name: new RegExp(`^${name}`) })).toHaveAttribute('aria-current', 'page');
+    for (const tab of await nav.getByRole('link').all()) await expect(tab).toBeInViewport({ ratio: 1 });
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+  }
 });
 
 test('other websites cannot drive the logger', async ({ request }) => {

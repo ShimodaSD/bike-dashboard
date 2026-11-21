@@ -1,9 +1,10 @@
-// Settings drawer: FTP and weight checks, power smoothing, workout loading, Clear data, Stop logger.
+// Settings and Training pages: FTP and weight checks, power smoothing, workout loading, Clear data, Stop logger.
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Settings } from '../../src/app';
+import { Train } from '../../src/train/train';
 import type { Workout } from '../../src/types/workout';
 
 const posted = () => vi.mocked(fetch).mock.calls.map(c => c[0]);
@@ -16,8 +17,8 @@ function Harness({ recording = false, canCsv = true, onCsv = () => {} }) {
   const [sex, setSex] = useState<'m' | 'f'>('m');
   return <>
     <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} sex={sex} setSex={setSex} smooth={smooth} setSmooth={setSmooth}
-              liveRate={liveRate} setLiveRate={setLiveRate} onCsv={onCsv} canCsv={canCsv} recording={recording}
-              workout={{ wo, setWo, sound, setSound }} />
+              liveRate={liveRate} setLiveRate={setLiveRate} onCsv={onCsv} canCsv={canCsv} recording={recording} />
+    <Train workout={{ wo, setWo, sound, setSound }} />
     <output data-testid="saved">{JSON.stringify({ ftp, kg, smooth, liveRate, wo: wo?.name ?? null, steps: wo?.segs.length, sound })}</output>
   </>;
 }
