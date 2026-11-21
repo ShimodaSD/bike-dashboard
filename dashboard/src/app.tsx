@@ -2,7 +2,8 @@
 //   GET  /events  Server-Sent Events: init, sample, preview, status, laps,
 //                 live (instant numbers on every trainer packet; ?live=2 caps it at 2/s)
 //   POST /lap     start a new lap
-//   POST /start, /finish   begin / end a recorded ride
+//   POST /start?kg=, /finish   begin / end a recorded ride (kg: rider weight, saved with the ride)
+//   POST /ride/weight?kg=   weight changed in Settings while recording
 //   POST /pause?on=1|0     pause / resume the ride in progress (timer and workout stop)
 //   POST /devices/scan, /devices/use|search|off?role=trainer|hr   device panel
 //   POST /control?on=1|0, /control/grade?pct=, /control/power?w=   trainer control (control/climb.jsx)
@@ -27,6 +28,7 @@ import { Charts } from './charts/charts';
 import { RideReview } from './review/review-panel';
 import { TimeInZone } from './review/zones';
 import { PastRides } from './past/past-rides';
+import { LEVELS, PROFILE_SOURCE, fmtWkg, levelOf, wkgOf, type ProfileSex } from './util/profile';
 import { useRoute, RIDES_HASH } from './hooks/route';
 import { FtpTestBand, FtpTestSettings, protocolWorkout, startFtpTest, type FtpTestSettingsProps } from './ftp/ftp';
 import type { DeviceChoice, DeviceKind, DeviceRole, FoundDevice, HrState, HrStatus, LiveValues, RideState,
@@ -186,7 +188,7 @@ function FtpField({ ftp, setFtp }: { ftp: number; setFtp: (v: number) => void })
   );
 }
 
-function WeightField({ kg, setKg }: { kg: number | null; setKg: (v: number | null) => void }) {
+function WeightField({ kg, setKg, ftp, sex }: { kg: number | null; setKg: (v: number | null) => void; ftp: number; sex: ProfileSex }) {
   // typed as text so a half-typed "7" or a comma ("72,5") isn't wiped while typing
   const [kgDraft, setKgDraft] = useState(kg == null ? '' : String(kg));
   const [kgErr, setKgErr] = useState(false);
@@ -205,18 +207,31 @@ function WeightField({ kg, setKg }: { kg: number | null; setKg: (v: number | nul
                onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()} /> kg
       </div>
       <p className={'help' + (kgErr ? ' err' : '')}>
-        {kgErr ? 'Weight must be between 30 and 200 kg.' : 'Used for W/kg. FTP and weight are remembered in this browser.'}</p>
+        {kgErr ? 'Weight must be between 30 and 200 kg.' : 'Used for W/kg and saved with each ride. FTP and weight are remembered in this browser.'}</p>
+      {kg && !kgErr ? <FtpWkg ftp={ftp} kg={kg} sex={sex} /> : null}
     </div>
+  );
+}
+
+// FTP per kg and its level on Coggan's power profile, with the next level up as a target.
+function FtpWkg({ ftp, kg, sex }: { ftp: number; kg: number; sex: ProfileSex }) {
+  const wkg = ftp / kg, level = levelOf('ft', wkg, sex);
+  return (
+    <p className="wkg-level" aria-live="polite">
+      FTP <b>{fmtWkg(wkg)} W/kg</b> · <b>{level}</b>
+      <small title={PROFILE_SOURCE}> on Coggan&apos;s power profile</small>
+    </p>
   );
 }
 
 interface SettingsProps {
   ftp: number; setFtp: (v: number) => void; kg: number | null; setKg: (v: number | null) => void;
+  sex: ProfileSex; setSex: (v: ProfileSex) => void;
   onCsv: () => void; canCsv: boolean; smooth: number; setSmooth: (v: number) => void;
   liveRate: LiveRate; setLiveRate: (v: LiveRate) => void; recording: boolean; workout: WorkoutSettingsProps;
   ftpTest?: FtpTestSettingsProps; sim?: SimSettings;
 }
-export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout, ftpTest, sim }: SettingsProps) {
+export function Settings({ ftp, setFtp, kg, setKg, sex, setSex, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout, ftpTest, sim }: SettingsProps) {
   return (
     <section className="settings">
       <FtpField key={ftp} ftp={ftp} setFtp={setFtp} />
@@ -224,7 +239,17 @@ export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmo
         <span className="flabel">FTP test</span>
         <FtpTestSettings {...ftpTest} />
       </div>}
-      <WeightField key={kg ?? ''} kg={kg} setKg={setKg} />
+      <WeightField key={kg ?? ''} kg={kg} setKg={setKg} ftp={ftp} sex={sex} />
+      <div className="field">
+        <label htmlFor="profile-sex">Power profile</label>
+        <div className="inline">
+          <select id="profile-sex" value={sex} onChange={e => setSex(e.target.value as ProfileSex)}>
+            <option value="m">Men&apos;s table</option>
+            <option value="f">Women&apos;s table</option>
+          </select>
+        </div>
+        <p className="help">Which of Coggan&apos;s tables rates your W/kg, from {LEVELS[LEVELS.length - 1]} to {LEVELS[0]}.</p>
+      </div>
       {sim && <ClimbFeel sim={sim} />}
       <div className="field">
         <label htmlFor="smooth">Power number</label>
@@ -517,7 +542,7 @@ const Stats = memo(function Stats({ hist, st, ftp, kg, more, setMore, mode }: St
   const kj = <Tile key="kj" label="Calories" value={Math.round(kcalOf(st.kj))} unit="kcal" sub={`${Math.round(st.kj)} kJ of work`} />;
   const tssT = <Tile key="tss" label="TSS" value={fmtTss(tss)} sub="training stress" />;
   const ifT = <Tile key="if" label="Intensity factor" value={IF ? IF.toFixed(2) : '–'} sub="NP ÷ FTP" />;
-  const wkg = <Tile key="wkg" label="W/kg" value={kg ? (p3 / kg).toFixed(2) : '–'} sub={kg ? `at ${kg} kg` : 'Set weight in Settings'} />;
+  const wkg = <Tile key="wkg" label={done ? 'Avg W/kg' : 'W/kg'} value={fmtWkg(wkgOf(p3, kg))} sub={kg ? `at ${kg} kg` : 'Set weight in Settings'} />;
   const bestT = best && <Tile key="best" label={`Best ${best.sec / 60} min`} value={r0(best.p)} unit="W"
                              sub={best.p ? `${Math.round((best.p / ftp) * 100)}% FTP` : 'ride too short'} />;
   // riding: the running totals; finished: what the ride achieved first
@@ -653,7 +678,11 @@ export function App() {
   const mode: Mode = ride.state === 'recording' ? 'recording' : ride.state === 'finished' ? 'finished' : 'ready';
   const paused = mode === 'recording' && !!ride.paused;
   const [ftp, setFtp] = useStored('ftp', 200);    // FTP and weight stay in this browser
-  const [kg, setKg] = useStored<number | null>('kg', null);
+  const [kg, setKgStored] = useStored<number | null>('kg', null);
+  const [sex, setSex] = useStored<ProfileSex>('profileSex', 'm');
+  // the weight goes with the ride: sent at Start, and again if it is changed mid-ride
+  const setKg = (v: number | null) => { setKgStored(v); if (mode === 'recording') post(`/ride/weight?kg=${v ?? ''}`); };
+  const rideKg = mode !== 'ready' && ride.kg != null ? ride.kg : kg;   // a finished ride keeps its own
   const [win, setWin] = useStored('win', 1200);
   const [more, setMore] = useStored('moreStats', false);
   const [wo, setWo] = useStored<Workout | null>('workout', null);
@@ -705,13 +734,14 @@ export function App() {
     finish: () => pressFinish(() => post('/finish')),
     start: () => {
       if (route === 'rides') window.location.hash = '';   // a new ride: back to the live numbers
-      return unsaved ? pressStart(() => post('/start')) : post('/start');
+      const start = () => post(`/start${kg ? `?kg=${kg}` : ''}`);
+      return unsaved ? pressStart(start) : start();
     },
   };
   // FTP test: the logger runs it as a ride; while it is on, its steps replace the loaded workout.
   const ftpStatus = status.ftp;
   const ftpRun = ftpStatus?.test ?? null;
-  const startTest = () => unsaved ? pressTest(() => startFtpTest(ftp)) : startFtpTest(ftp);
+  const startTest = () => unsaved ? pressTest(() => startFtpTest(ftp, kg)) : startFtpTest(ftp, kg);
   const testWo = useMemo(() => (ftpStatus ? protocolWorkout(ftpStatus.protocol) : null), [ftpStatus?.protocol]); // eslint-disable-line react-hooks/exhaustive-deps
   const testing = !!ftpRun && mode === 'recording';
   const activeWo = testing ? testWo : wo;
@@ -756,14 +786,14 @@ export function App() {
       <Header status={status} ride={ride} act={act} panel={panel} toggle={toggle} />
       {panel === 'devices' && <Drawer id="devices" title="Devices" onClose={closePanel}>
         <Devices status={status} recording={mode === 'recording'} /></Drawer>}
-      {panel === 'settings' && <Drawer id="settings" title="Settings" onClose={closePanel}><Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
+      {panel === 'settings' && <Drawer id="settings" title="Settings" onClose={closePanel}><Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} sex={sex} setSex={setSex} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
                                  onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} recording={mode === 'recording'}
                                  workout={{ wo, setWo, sound: woSound, setSound: setWoSound }}
                                  ftpTest={{ ftpStatus, ftp, setFtp, recording: mode === 'recording', startArmed: testArmed, onStart: startTest }}
                                  sim={online ? ctl?.sim : undefined} /></Drawer>}
       {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
-      {route === 'rides' ? <PastRides ftp={ftp} coach={online ? status.coach : undefined} /> : <>
+      {route === 'rides' ? <PastRides rider={{ ftp, kg, sex }} coach={online ? status.coach : undefined} /> : <>
       <RideStrip ride={ride} seconds={hist.length} startArmed={startArmed} lapFlash={lapFlash}
                  sent={sent || NOT_SENT} onDownload={markSent} ftpTest={testing}
                  onFtpTest={ftpStatus && online ? startTest : undefined} />
@@ -772,10 +802,11 @@ export function App() {
       {activeWo && mode !== 'finished' ? <WorkoutBand wo={activeWo} t={Math.max(0, hist.length - (testing ? ftpRun?.t0 ?? 0 : 0))} mode={mode} ftp={ftp} sound={woSound}
                             onRemove={testing ? undefined : () => setWo(null)} paused={paused} {...reading} /> : null}
       {mode === 'finished' && hist.length > 0 && <RideReview hist={hist} st={st} ftp={ftp} workout={wo} woStart={0} ftpTest={!!ftpRun}
-                                                                   coach={online ? status.coach : undefined} laps={laps} source="live" />}
+                                                                   coach={online ? status.coach : undefined} laps={laps} source="live"
+                                                                   kg={rideKg} kgFrom={ride.kg != null ? 'ride' : 'settings'} sex={sex} />}
       <Hero hist={hist} laps={laps} st={st} ftp={ftp} preview={mode === 'recording' && !paused ? null : preview} mode={mode}
             now={now} recent={recent} smooth={smooth} paused={paused} targets={targets} />
-      <Stats hist={hist} st={st} ftp={ftp} kg={kg} more={more} setMore={setMore} mode={mode} />
+      <Stats hist={hist} st={st} ftp={ftp} kg={rideKg} more={more} setMore={setMore} mode={mode} />
       <section className="main">
         <Charts hist={hist} laps={laps} ftp={ftp} win={win} setWin={setWin} version={version}
                 workout={testing || (ftpRun && mode === 'finished') ? testWo : wo} />

@@ -3,6 +3,7 @@
 //   .tcx   Garmin Connect / Strava exports (power in the TPX extension)
 //   .gpx   exports with heart rate / cadence / power extensions (no power: no review of power)
 //   .csv   the logger's session_1hz.csv, or the dashboard's Export CSV
+// The rider's weight comes along when the file has it (FIT user profile, the logger's weight_kg column).
 // Every format comes out as the same 1 Hz samples the live feed sends, so the review and the
 // ride maths run unchanged. Nothing is uploaded: the file is read here.
 import type { Sample } from '../types/feed';
@@ -13,6 +14,7 @@ export interface RideFile {
   hist: Sample[];
   hasPower: boolean;
   hasHr: boolean;
+  kg: number | null;                  // rider weight saved in the file (FIT user profile, logger CSV)
 }
 
 // One reading at a moment in time, as found in the file (any field may be missing).
@@ -23,6 +25,7 @@ interface Point {
   cad?: number | null;
   speed?: number | null;              // km/h
   dist?: number | null;               // m, cumulative
+  kg?: number | null;                 // rider weight, when the file has one
 }
 
 const MAX_GAP_S = 10;                 // a longer gap is a pause: left out, not filled in
@@ -85,10 +88,18 @@ export function toRide(name: string, raw: Point[]): RideFile {
     name, start: new Date(Math.floor(pts[0].t) * 1000), hist,
     hasPower: pts.some(p => (p.power ?? 0) > 0),
     hasHr: pts.some(p => (p.hr ?? 0) > 0),
+    kg: weightOf(raw),
   };
 }
 
+// The rider's weight: the first plausible one in the file, to 0.1 kg.
+function weightOf(pts: Point[]) {
+  const p = pts.find(x => x.kg != null && x.kg >= 30 && x.kg <= 200);
+  return p ? Math.round(p.kg! * 10) / 10 : null;
+}
+
 // ------------------------------------------------------------------ .fit
+// user_profile (global 3): weight 4 (0.1 kg), set on the first record point.
 // The record message (global 20): timestamp 253, heart_rate 3, cadence 4, distance 5 (cm),
 // speed 6 (mm/s), power 7, enhanced_speed 73 (mm/s). Other messages are skipped.
 const FIT_EPOCH = 631065600;          // 1989-12-31T00:00:00Z in Unix seconds
@@ -105,7 +116,7 @@ export function parseFit(buf: ArrayBuffer): Point[] {
   const end = Math.min(buf.byteLength, hsize + v.getUint32(4, true));
   const defs = new Map<number, FitDef>();
   const out: Point[] = [];
-  let pos = hsize, lastTs = 0;
+  let pos = hsize, lastTs = 0, kg: number | null = null;
 
   const read = (at: number, size: number, base: number, little: boolean): number | null => {
     const t = base & 0x1f;              // base type number
@@ -145,13 +156,16 @@ export function parseFit(buf: ArrayBuffer): Point[] {
       pos = dataMsg(def, pos, null);
     }
   }
+  if (kg != null && out.length) out[0].kg = kg;
   return out;
 
   function dataMsg(def: FitDef, at: number, ts: number | null): number {
     if (def.global !== 20) {
-      // any message's timestamp (253) is the reference for the compressed headers that follow
+      // any message's timestamp (253) is the reference for the compressed headers that follow;
+      // user_profile (3) carries the rider's weight (4, 0.1 kg)
       for (const fd of def.fields) {
         if (fd.num === 253) { const x = read(at, fd.size, fd.base, def.little); if (x != null) lastTs = x; }
+        else if (def.global === 3 && fd.num === 4 && kg == null) { const w = read(at, fd.size, fd.base, def.little); if (w) kg = w / 10; }
         at += fd.size;
       }
       return at + def.devSize;
@@ -217,6 +231,6 @@ export function parseCsv(text: string): Point[] {
     const t = iso ? Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + 'Z') / 1000 : NaN;
     if (!Number.isFinite(t)) return [];
     return [{ t, power: num(c, 'power_w'), hr: num(c, 'heart_rate_bpm'), cad: num(c, 'cadence_rpm'),
-              speed: num(c, 'speed_kmh'), dist: num(c, 'distance_m') }];
+              speed: num(c, 'speed_kmh'), dist: num(c, 'distance_m'), kg: num(c, 'weight_kg') }];
   });
 }

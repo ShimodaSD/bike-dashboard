@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import thinkrider_logger as tl
-from helpers.fit import ACTIVITY, EVENT, FILE_ID, LAP, RECORD, SESSION, messages, read_fit
+from helpers.fit import ACTIVITY, EVENT, FILE_ID, LAP, RECORD, SESSION, USER_PROFILE, messages, read_fit
 
 T0 = datetime(2026, 3, 1, 9, 0, 0, tzinfo=timezone.utc)
 
@@ -119,6 +119,20 @@ class TestFitFile:
         assert (tmp_path / "ride_2.fit").exists()
         assert len(messages(data, RECORD)) == 60
         assert [lap[19] for lap in messages(data, LAP)] == [180, 260]
+
+    def test_weight_in_user_profile(self):
+        assert messages(tl.build_fit(ride([200] * 5), [0]), USER_PROFILE) == []        # no weight: left out
+        (prof,) = messages(tl.build_fit(ride([200] * 5), [0], 68.4), USER_PROFILE)
+        assert prof[4] == 684
+
+    def test_rebuild_from_csv_keeps_weight(self, tmp_path):
+        with open(tmp_path / "session_1hz.csv", "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=tl.CSV_FIELDS)
+            w.writeheader()
+            w.writerows({**s, "grade_pct": "", "weight_kg": 70.5} for s in ride([200] * 10))
+        tl.fit_from_csv(str(tmp_path))
+        (prof,) = messages((tmp_path / "ride.fit").read_bytes(), USER_PROFILE)
+        assert prof[4] == 705
 
     def test_whole_file_parses(self):
         msgs = read_fit(tl.build_fit(ride([200] * 5), [0]))

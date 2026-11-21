@@ -343,6 +343,7 @@ DECODED_FIELDS = [
 # --------------------------------------------------------------------------
 SESSION_FIELDS = ["t", "timestamp_utc", "lap", "power_w", "cadence_rpm",
                   "speed_kmh", "heart_rate_bpm", "distance_m", "energy_kj", "grade_pct"]
+CSV_FIELDS = SESSION_FIELDS + ["weight_kg"]   # session_1hz.csv: + the rider's weight (blank if not set)
 
 
 class Live:
@@ -353,7 +354,7 @@ class Live:
         self.clients = set()           # asyncio.Queue per dashboard tab
         self.status = {"state": "starting", "connected": False, "device": None,
                        "hr": {"state": "off", "device": None},
-                       "ride": {"state": "ready", "n": 0, "fit": None, "paused": False,
+                       "ride": {"state": "ready", "n": 0, "fit": None, "paused": False, "kg": None,
                                 "dir": os.path.basename(os.path.abspath(out_dir))}}
         self.trainer_address = None
         self.distance_m = 0.0
@@ -378,7 +379,8 @@ class Live:
     def recording(self):
         return self.status["ride"]["state"] == "recording"
 
-    def start_ride(self):
+    def start_ride(self, kg=None):
+        """kg: the rider's weight from the dashboard, saved with the ride (CSV + .FIT)."""
         if self.recording:
             return
         n = self.status["ride"]["n"] + 1
@@ -389,10 +391,10 @@ class Live:
         name = "session_1hz.csv" if n == 1 else f"session_1hz_{n}.csv"
         self.sess_path = os.path.join(self.out_dir, name)
         self.sess_f = open(self.sess_path, "w", newline="")
-        self.sess_w = csv.DictWriter(self.sess_f, fieldnames=SESSION_FIELDS)
+        self.sess_w = csv.DictWriter(self.sess_f, fieldnames=CSV_FIELDS)
         self.sess_w.writeheader()
         self.status["ride"] = {**self.status["ride"], "state": "recording", "n": n, "fit": None,
-                               "paused": False}
+                               "paused": False, "kg": kg}
         if self.ftp_tests:
             self.ftp_tests.on_ride_start()
         print(f"Ride {n} started")
@@ -407,7 +409,7 @@ class Live:
         self.sess_f.close()
         self.sess_f = None
         path = os.path.join(self.out_dir, self.ride_start.strftime("ride_%Y%m%d_%H%M%S.fit"))
-        self.fit_path = path if write_fit(path, self.history, self.laps) else None
+        self.fit_path = path if write_fit(path, self.history, self.laps, self.status["ride"].get("kg")) else None
         self.status["ride"] = {**self.status["ride"], "state": "finished", "paused": False,
                                "fit": self.fit_path and os.path.basename(self.fit_path)}
         if self.ftp_tests:
@@ -425,7 +427,7 @@ class Live:
         if self.recording or not self.history or not self.sess_path:
             return False
         self.sess_f = open(self.sess_path, "a", newline="")
-        self.sess_w = csv.DictWriter(self.sess_f, fieldnames=SESSION_FIELDS)
+        self.sess_w = csv.DictWriter(self.sess_f, fieldnames=CSV_FIELDS)
         self.status["ride"] = {**self.status["ride"], "state": "recording", "fit": None,
                                "paused": False}
         if self.ftp_tests:
@@ -459,11 +461,19 @@ class Live:
         self.history, self.laps = [], [0]
         self.distance_m = self.energy_kj = 0.0
         self.ride_start = self.fit_path = self.sess_path = None
-        self.status["ride"] = {**self.status["ride"], "state": "ready", "fit": None, "paused": False}
+        self.status["ride"] = {**self.status["ride"], "state": "ready", "fit": None, "paused": False, "kg": None}
         if self.ftp_tests:
             self.ftp_tests.on_ride_start()        # a test in progress goes too
         print("Dashboard cleared")
         self.broadcast("init", {"history": [], "laps": self.laps, "status": self.status})
+
+    def set_ride_kg(self, kg):
+        """Weight changed in Settings mid-ride: later CSV rows and the .FIT use the new one."""
+        if not self.recording:
+            return False
+        self.status["ride"] = {**self.status["ride"], "kg": kg}
+        self.broadcast("status", self.status)
+        return True
 
     # -- inputs ------------------------------------------------------------
     def update(self, row: dict):
@@ -560,7 +570,7 @@ class Live:
             "grade_pct": self.control.current_grade() if self.control else None,
         }
         self.history.append(s)
-        self.sess_w.writerow(s)
+        self.sess_w.writerow({**s, "weight_kg": self.status["ride"].get("kg")})
         self.sess_f.flush()
         self.broadcast("sample", s)
         if self.ftp_tests:
@@ -626,6 +636,15 @@ def is_local_host(host_header):
 
 
 MAX_COACH_BODY = 200_000                    # bytes: a ride summary is ~5 KB
+
+
+def rider_kg(params):
+    """?kg= from the dashboard: the rider's weight to 0.1 kg, or None if missing or implausible."""
+    try:
+        kg = round(finite(params.get("kg", "")), 1)
+    except (ValueError, OverflowError):
+        return None
+    return kg if 30 <= kg <= 200 else None
 
 
 def finite(text):
@@ -729,13 +748,17 @@ async def handle_http(reader, writer, live: Live):
             live.clear()
             body, ctype, code = b"ok", "text/plain", "200 OK"
         elif path in ("/start", "/finish") and method == "POST":
-            live.start_ride() if path == "/start" else live.finish_ride()
+            live.start_ride(rider_kg(params)) if path == "/start" else live.finish_ride()
             body, ctype, code = b"ok", "text/plain", "200 OK"
+        elif path == "/ride/weight" and method == "POST":
+            ok = live.set_ride_kg(rider_kg(params))
+            body, ctype = (b"ok", "text/plain") if ok else (b"not recording", "text/plain")
+            code = "200 OK" if ok else "409 Conflict"
         elif path.startswith("/ftp-test/") and method == "POST" and live.ftp_tests:
             ft, act = live.ftp_tests, path[len("/ftp-test/"):]
             try:
                 ftp = int(finite(params["ftp"])) if params.get("ftp") else None
-                ok = (ft.start(ftp if ftp and 50 <= ftp <= 600 else None) if act == "start"
+                ok = (ft.start(ftp if ftp and 50 <= ftp <= 600 else None, rider_kg(params)) if act == "start"
                       else ft.cancel() if act == "cancel"
                       else ft.delete(params["id"]) if act == "delete"
                       else None)
@@ -788,7 +811,7 @@ async def handle_http(reader, writer, live: Live):
                         body = fh.read()
                     name = os.path.basename(live.fit_path)
                 else:                                         # ride so far
-                    body = build_fit(live.history, live.laps)
+                    body = build_fit(live.history, live.laps, live.status["ride"].get("kg"))
                     name = (live.ride_start or datetime.now()).strftime("ride_%Y%m%d_%H%M%S.fit")
                 ctype, code = "application/vnd.ant.fit", "200 OK"
                 extra = f'Content-Disposition: attachment; filename="{name}"\r\n'
@@ -1059,9 +1082,10 @@ def _summary(rows):
     }
 
 
-def build_fit(history, laps) -> bytes:
+def build_fit(history, laps, weight_kg=None) -> bytes:
     """history: 1 Hz samples (Live.history or rows of session_1hz.csv);
-    laps: history indexes where each lap starts."""
+    laps: history indexes where each lap starts; weight_kg: the rider's weight, written as the
+    user profile so W/kg can be worked out from the file later (None: left out)."""
     rows = []
     for s in history:
         rows.append({
@@ -1077,6 +1101,8 @@ def build_fit(history, laps) -> bytes:
     start, end = rows[0]["ts"], rows[-1]["ts"]
     f.msg(0, [(0, ENUM, 4), (1, U16, 255), (2, U16, 0),       # activity, development
               (3, U32Z, start), (4, U32, start)])
+    if weight_kg:
+        f.msg(3, [(4, U16, weight_kg * 10)])                  # user_profile: weight, 0.1 kg
     ev = lambda ts, typ: f.msg(21, [(253, U32, ts), (0, ENUM, 0), (1, ENUM, typ), (4, U8, 0)])
     ev(start, 0)                                               # timer start
     for i, r in enumerate(rows):
@@ -1126,9 +1152,9 @@ def build_fit(history, laps) -> bytes:
     return f.bytes()
 
 
-def write_fit(path, history, laps) -> bool:
+def write_fit(path, history, laps, weight_kg=None) -> bool:
     try:
-        data = build_fit(history, laps)
+        data = build_fit(history, laps, weight_kg)
     except ValueError:
         return False
     with open(path, "wb") as fh:
@@ -1150,9 +1176,10 @@ def fit_from_csv(folder):
             if s.get("lap") != prev:
                 laps.append(i)
                 prev = s.get("lap")
+        kg = next((_num(s.get("weight_kg")) for s in reversed(hist) if s.get("weight_kg")), None)
         name = os.path.basename(path)
         out = os.path.join(folder, "ride" + name[len("session_1hz"):-len(".csv")] + ".fit")
-        if write_fit(out, hist, laps):
+        if write_fit(out, hist, laps, kg):
             print(f"Wrote {out} ({len(hist)} s) - upload it to Strava or Garmin Connect")
         else:
             print(f"{name} has no samples")

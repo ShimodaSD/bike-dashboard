@@ -1,10 +1,12 @@
 """The logger's web server: ride buttons, downloads, the event stream, and refusing other websites."""
 import asyncio
+import csv
 import json
 
 import pytest
 
 import thinkrider_logger as tl
+from helpers.fit import USER_PROFILE, messages
 from helpers.http import next_event, open_events, request, serve
 
 
@@ -117,6 +119,29 @@ class TestRideEndpoints:
             await request(port, "POST", "/clear")
         run(live, steps)
         assert live.laps == [0] and live.history == []
+
+    def test_weight_goes_with_the_ride(self, live):
+        """?kg= on Start is saved with the ride: status, every CSV row, the .FIT user profile."""
+        async def steps(port):
+            assert (await request(port, "POST", "/ride/weight?kg=70"))[0] == 409   # not recording
+            await request(port, "POST", "/start?kg=72.46")
+            assert live.status["ride"]["kg"] == 72.5
+            live.tick()
+            assert (await request(port, "POST", "/ride/weight?kg=71"))[0] == 200   # changed mid-ride
+            live.tick()
+            await request(port, "POST", "/finish")
+            assert live.status["ride"]["kg"] == 71
+            with open(live.sess_path, newline="") as fh:
+                assert [r["weight_kg"] for r in csv.DictReader(fh)] == ["72.5", "71.0"]
+            (prof,) = messages(open(live.fit_path, "rb").read(), USER_PROFILE)
+            assert prof[4] == 710                                   # 0.1 kg units
+            await request(port, "POST", "/clear")
+            assert live.status["ride"]["kg"] is None
+            for bad in ("", "abc", "nan", "5", "900"):              # missing or implausible: no weight
+                await request(port, "POST", f"/start?kg={bad}")
+                assert live.status["ride"]["kg"] is None, bad
+                await request(port, "POST", "/clear")
+        run(live, steps)
 
     def test_pause_and_continue(self, live):
         async def steps(port):

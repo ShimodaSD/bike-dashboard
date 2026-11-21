@@ -41,6 +41,7 @@ export interface RideStatus {
   fit: string | null;                // the finished ride's .FIT file name
   paused?: boolean;                  // Pause pressed: the timer stops, nothing is recorded
   dir: string;                       // ride folder name
+  kg?: number | null;                // rider weight saved with this ride (sent with Start)
 }
 
 // Device panel: what each role connects to.

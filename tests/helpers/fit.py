@@ -7,7 +7,7 @@ import struct
 TYPES = {0x00: "B", 0x02: "B", 0x84: "H", 0x86: "I", 0x8C: "I"}
 INVALID = {0x00: 0xFF, 0x02: 0xFF, 0x84: 0xFFFF, 0x86: 0xFFFFFFFF, 0x8C: 0}
 
-FILE_ID, SESSION, LAP, RECORD, EVENT, ACTIVITY = 0, 18, 19, 20, 21, 34
+FILE_ID, USER_PROFILE, SESSION, LAP, RECORD, EVENT, ACTIVITY = 0, 3, 18, 19, 20, 21, 34
 
 
 def read_fit(data: bytes):

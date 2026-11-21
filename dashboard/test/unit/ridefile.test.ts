@@ -27,6 +27,10 @@ describe('.fit from this logger', () => {
     expect(last.energy_kj).toBeCloseTo((900 * 150 + 870 * 200) / 1000, 5);
   });
 
+  it('has no weight (built without one)', () => {
+    expect(ride.kg).toBeNull();
+  });
+
   it('gets a review', () => {
     expect(reviewRide({ hist: ride.hist, ftp: 250 }).kind).toBe('Endurance ride');
   });
@@ -42,6 +46,9 @@ function otherFit(): ArrayBuffer {
   // file_id (global 0), local 1, little endian: type (enum) only
   u8(0x41); u8(0); u8(0); u8(0); u8(0); u8(1); u8(0); u8(1); u8(0x00);
   u8(0x01); u8(4);
+  // user_profile (global 3), local 3, little endian: weight (uint16, 0.1 kg) = 72.5 kg
+  u8(0x43); u8(0); u8(0); u8(3); u8(0); u8(1); u8(4); u8(2); u8(0x84);
+  u8(0x03); u8(725 & 0xff); u8(725 >> 8);
   // record (global 20), local 0, big endian, with one 2-byte developer field
   u8(0x60); u8(0); u8(1); u16be(20); u8(4);
   u8(253); u8(4); u8(0x86);  u8(7); u8(2); u8(0x84);  u8(3); u8(1); u8(0x02);  u8(73); u8(4); u8(0x86);
@@ -68,6 +75,9 @@ describe('.fit from other devices', () => {
     expect(pts[0].speed).toBeCloseTo(36, 5);
     expect(pts[1]).toMatchObject({ t: 1100000001 + FIT_EPOCH, power: 260, hr: 152 });
     expect(pts[2]).toMatchObject({ t: 1100000002 + FIT_EPOCH, power: null, hr: null });
+  });
+  it("the rider's weight from the user profile", () => {
+    expect(toRide('x.fit', pts).kg).toBe(72.5);
   });
   it('rejects a file that is not .fit', () => {
     expect(() => parseFit(new TextEncoder().encode('hello world, not fit').buffer as ArrayBuffer)).toThrow('not a .fit file');
@@ -112,6 +122,12 @@ describe('the logger\'s CSV', () => {
     const r = toRide('session_1hz.csv', parseCsv(csv));
     expect(r.hist.map(s => [s.power_w, s.heart_rate_bpm])).toEqual([[150, null], [160, 131]]);
     expect(r.hasHr).toBe(true);
+  });
+  it('the weight_kg column comes along; none or nonsense is no weight', () => {
+    expect(toRide('session_1hz.csv', parseCsv(csv)).kg).toBeNull();
+    const withKg = csv.split('\n').map((l, i) => l + (i ? ',71.2' : ',weight_kg')).join('\n');
+    expect(toRide('session_1hz.csv', parseCsv(withKg)).kg).toBe(71.2);
+    expect(toRide('session_1hz.csv', parseCsv(withKg.replaceAll(',71.2', ',7'))).kg).toBeNull();
   });
   it('another CSV is refused', () => {
     expect(() => parseCsv('a,b\n1,2')).toThrow('not a ride from this logger');
