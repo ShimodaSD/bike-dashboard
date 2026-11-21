@@ -22,6 +22,7 @@ import { useStored } from './hooks/stored';
 import { useArmed, useEvent } from './hooks/hooks';
 import { ZONES, nz, fmtT, zoneOf, stats, bestPower, tssOf, fmtTss, avg3, livePower, type RideStats } from './util/ride';
 import { Charts } from './charts/charts';
+import { RideReview } from './review/review-panel';
 import { FtpTestBand, FtpTestSettings, protocolWorkout, startFtpTest, type FtpTestSettingsProps } from './ftp/ftp';
 import type { DeviceChoice, DeviceKind, DeviceRole, FoundDevice, HrState, HrStatus, LiveValues, RideState,
   RideStatus, Sample, ScanStatus, Status, TrainerState } from './types/feed';
@@ -738,6 +739,7 @@ export function App() {
                             cadence={fresh ? now.cadence_rpm : last ? last.cadence_rpm : null}
                             hr={fresh ? now.heart_rate_bpm : last ? last.heart_rate_bpm : null}
                             speed={fresh ? now.speed_kmh : last ? last.speed_kmh : null} /> : null}
+      {mode === 'finished' && hist.length > 0 && <RideReview hist={hist} st={st} ftp={ftp} workout={wo} woStart={0} ftpTest={!!ftpRun} />}
       <Hero hist={hist} laps={laps} st={st} ftp={ftp} preview={mode === 'recording' ? null : preview} mode={mode}
             now={now} recent={recent} smooth={smooth} />
       <Stats hist={hist} st={st} ftp={ftp} kg={kg} more={more} setMore={setMore} mode={mode} />

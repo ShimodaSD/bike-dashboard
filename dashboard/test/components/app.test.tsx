@@ -155,6 +155,21 @@ describe('finished', () => {
   });
 });
 
+describe('ride review', () => {
+  it('evaluates the finished ride', async () => {
+    await renderApp(finished(), ride(Array(3600).fill(150)));
+    const review = screen.getByRole('region', { name: 'Ride review' });
+    expect(within(review).getByText('Tempo ride')).toBeInTheDocument();
+    expect(review).toHaveTextContent('Moderate load');
+    expect(review).toHaveTextContent('Heart rate held');
+  });
+
+  it('is only on the finished screen', async () => {
+    await renderApp(recording(), ride(Array(600).fill(150)));
+    expect(screen.queryByRole('region', { name: 'Ride review' })).not.toBeInTheDocument();
+  });
+});
+
 describe('connection', () => {
   it('says when the logger is gone', async () => {
     await renderApp();

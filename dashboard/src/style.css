@@ -458,3 +458,33 @@ td .now { font-size: 11px; font-weight: 600; color: var(--rec-text); margin-left
 .ftp-guide li + li { margin-top: 3px; }
 .ftp-guide p { margin: 0; line-height: 1.45; max-width: 70ch; }
 .ftptest p.ft-hint { margin: 0; line-height: 1.45; }
+
+/* ---------------- ride review: finished screen, what the ride was and how it went */
+.review { margin-bottom: 12px; padding: 14px 16px; border-color: #2c5a25; }
+.review .rv-head { display: flex; align-items: flex-end; gap: 12px 28px; flex-wrap: wrap; }
+.review h2 { font-size: 14px; font-weight: 600; margin: 0; color: var(--text-secondary); }
+.review .rv-kind { margin: 4px 0 0; font-size: 28px; font-weight: 700; line-height: 1.15; letter-spacing: -.01em;
+                   display: flex; align-items: baseline; gap: 6px 14px; flex-wrap: wrap; }
+.review .rv-load { font-size: 16px; font-weight: 600; color: var(--done-text); letter-spacing: 0; }
+.review .rv-nums { display: flex; gap: 8px 28px; margin: 0 0 0 auto; flex-wrap: wrap; }
+.review .rv-nums div { display: flex; flex-direction: column; }
+.review .rv-nums dt { font-size: 12px; color: var(--text-muted); }
+.review .rv-nums dd { margin: 2px 0 0; font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.review .rv-nums small { font-size: 14px; font-weight: 500; color: var(--text-secondary); margin-left: 1px; }
+.review .rv-notes { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px 24px;
+                    grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); }
+.review .rv-notes li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 1.45;
+                       color: var(--text-secondary); padding-top: 8px; border-top: 1px solid var(--border); }
+.review .rv-notes b { color: var(--text-primary); font-weight: 600; margin-right: 2px; }
+.review .rv-mark { flex: none; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center;
+                   justify-content: center; font-size: 12px; font-weight: 800; margin-top: 1px;
+                   background: var(--surface-2); color: var(--text-secondary); }
+.review li.good .rv-mark { background: var(--done-tint); color: var(--done-text); box-shadow: inset 0 0 0 1px #2c5a25; }
+.review li.warn .rv-mark { background: #2a2210; color: var(--warning); box-shadow: inset 0 0 0 1px #6b5214; }
+.review .rv-foot { margin: 10px 0 0; font-size: 12px; color: var(--text-muted); }
+@media (max-width: 560px) {
+  .review { padding: 12px; }
+  .review .rv-kind { font-size: 24px; }
+  .review .rv-nums { margin-left: 0; gap: 8px 22px; }
+  .review .rv-nums dd { font-size: 20px; }
+}
