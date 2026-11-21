@@ -89,9 +89,9 @@ FTMS, the same standard control Zwift uses. It is off every time the logger star
 - **Workouts**: a `.zwo` step can carry `Grade="6"` (or `OnGrade` / `OffGrade` on `IntervalsT`);
   with control on, each step sets the grade when it starts. In ERG mode the step's power target
   is sent instead. Try `workouts/climb-repeats.zwo`.
-- **Climb feel** (Settings): *Trainer difficulty* sends a share of the grade to the trainer,
+- **Climb feel** (in the Trainer control band on Live, with − / +): *Trainer difficulty* sends a share of the grade to the trainer,
   like Zwift's setting (100 % = the real grade, 50 % = a 10 % climb feels like 5 %). Under
-  *Advanced* you can change the rolling resistance (0.004, road tyres) and the wind resistance
+  *Rolling and wind resistance* you can change the rolling resistance (0.004, road tyres) and the wind resistance
   (0.51 kg/m, what Zwift and most FTMS apps send) that go with every grade. Changes apply at once,
   mid-climb too, and the logger remembers them in `config/trainer.json`. The ride still records
   the road grade you picked.

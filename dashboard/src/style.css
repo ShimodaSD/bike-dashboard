@@ -595,13 +595,27 @@ header .controls button.pause.on { border-color: var(--warning); color: var(--wa
 }
 .wo-state.paused { color: var(--warning); }
 
-/* ---------------- climb feel (Settings): trainer difficulty, rolling and wind resistance */
-.settings .feel-diff input[type=range] { flex: 1; min-width: 140px; width: auto; padding: 0; border: 0; background: none;
-                                         accent-color: var(--action); min-height: var(--tap); text-align: left; }
-.feel-val { min-width: 5ch; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-primary); font-weight: 600; }
+/* ---------------- climb feel (Trainer control band): trainer difficulty − / +, rolling and wind resistance */
+.feel { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.feel-diff { display: grid; grid-template-columns: auto auto minmax(0, 1fr); grid-template-areas: "label step quick" "help help help";
+             gap: 6px 16px; align-items: center; }
+.feel-label { grid-area: label; font-size: 14px; font-weight: 600; color: var(--text-secondary); }
+.feel-step { grid-area: step; display: flex; align-items: center; gap: 8px; }
+.feel-val { min-width: 5ch; text-align: center; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums;
+            color: var(--text-primary); }
+.feel-quicks { grid-area: quick; display: flex; gap: 8px; flex-wrap: wrap; }
 .feel-quick { min-width: 64px; font-variant-numeric: tabular-nums; }
 .feel-quick.on { background: var(--action); border-color: var(--action); color: #fff; font-weight: 600; }
+.feel-help { grid-area: help; margin: 0; font-size: 13px; color: var(--text-muted); }
+.feel-help b { color: var(--text-secondary); font-weight: 600; }
 .feel-more summary { cursor: pointer; min-height: var(--tap); display: flex; align-items: center;
-                     font-size: 14px; color: var(--text-secondary); }
-.feel-more[open] > .field { margin-top: 8px; }
-.feel-more > .help { margin-bottom: 8px; }
+                     font-size: 13px; color: var(--text-secondary); }
+.feel-adv { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 24px; }
+.feel-adv label { display: block; font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+.feel-adv .inline, .feel-more > .inline { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 14px; }
+.feel-adv input { width: 96px; text-align: right; }
+.feel-more > .help { margin: 8px 0; }
+@media (max-width: 560px) {
+  .feel-diff { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "label step" "quick quick" "help help"; }
+  .feel-quick { flex: 1; min-width: 0; }
+}

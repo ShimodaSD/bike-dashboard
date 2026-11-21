@@ -4,13 +4,14 @@
 //   POST /control?on=1|0      turn control on / off
 //   POST /control/grade?pct=  simulate this grade (Climb mode)
 //   POST /control/power?w=    hold this power (ERG mode)
-//   POST /control/sim?difficulty=&crr=&cw=   climb feel (Settings, control/climb-feel.tsx)
+//   POST /control/sim?difficulty=&crr=&cw=   climb feel (in this band, control/climb-feel.tsx)
 // status.control = { enabled, state, mode: 'sim'|'erg', grade, trainer_grade, sim, power_w, msg,
 //                    supports, power_range }
 import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import { useEvent } from '../hooks/hooks';
 import type { ControlState, ControlStatus } from '../types/feed';
 import type { WorkoutAt } from '../types/workout';
+import { ClimbFeel } from './climb-feel';
 
 const post = (path: string) => fetch(path, { method: 'POST' }).catch(() => {});
 export const GRADE_MIN = -5, GRADE_MAX = 15, GRADE_STEP = 0.5;
@@ -117,10 +118,11 @@ export function ClimbBand({ ctl, ftp, follow }: { ctl: ControlStatus; ftp: numbe
                 step={5} quick={ergQuick} quickLabel={w => `${w} W`} onSet={sendPower} />
         : <Dial label="Grade" value={ctl.grade} unit="%" fmt={fmtGrade} min={GRADE_MIN} max={GRADE_MAX}
                 step={GRADE_STEP} quick={QUICK} quickLabel={g => `${g} %`} onSet={sendGrade} />)}
+      {!erg && ctl.state !== 'unsupported' && <ClimbFeel sim={ctl.sim} />}
       {on && <p className="climb-foot">
         {follow ? <>{follow} </> : null}
-        {!erg && ctl.sim.difficulty !== 100 && <>Trainer difficulty {ctl.sim.difficulty} %:
-          it feels like {fmtGrade(ctl.trainer_grade)} %. </>}
+        {!erg && ctl.sim.difficulty !== 100 && <>At {ctl.sim.difficulty} % difficulty
+          the trainer feels {fmtGrade(ctl.trainer_grade)} %. </>}
         Back to 0 % when you finish or the trainer disconnects.<span className="keys"> Keys: <kbd>−</kbd> <kbd>+</kbd></span></p>}
     </section>
   );

@@ -208,7 +208,8 @@ interface SettingsProps {
   liveRate: LiveRate; setLiveRate: (v: LiveRate) => void; recording: boolean;
 }
 // Grouped by what the rider is changing: about you, how the live numbers look, the data on disk.
-// The workout, FTP test and Climb feel are on the Training page (train/train.tsx).
+// The workout and FTP test are on the Training page (train/train.tsx); Climb feel is in the
+// Trainer control band on Live (control/climb-feel.tsx).
 export function Settings({ ftp, setFtp, kg, setKg, sex, setSex, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording }: SettingsProps) {
   return (
     <section className="page" aria-labelledby="settings-h">
@@ -764,8 +765,7 @@ export function App() {
       {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
       {page === 'train' ? <Train workout={{ wo, setWo, sound: woSound, setSound: setWoSound }}
-                                 ftpTest={{ ftpStatus, ftp, setFtp, recording: mode === 'recording', startArmed: testArmed, onStart: startTest }}
-                                 sim={online ? ctl?.sim : undefined} />
+                                 ftpTest={{ ftpStatus, ftp, setFtp, recording: mode === 'recording', startArmed: testArmed, onStart: startTest }} />
       : page === 'rides' ? <PastRides rider={{ ftp, kg, sex }} coach={online ? status.coach : undefined} />
       : page === 'devices' ? <section className="page" aria-labelledby="devices-h">
           <PageHead id="devices-h" title="Devices">The trainer and a heart-rate source. Close Zwift and the ThinkRider app first: each device takes one connection at a time.</PageHead>
