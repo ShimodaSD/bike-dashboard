@@ -140,6 +140,19 @@ class TestRideEndpoints:
                 await request(port, "POST", "/clear")
         run(live, steps)
 
+    def test_pause_and_continue(self, live):
+        async def steps(port):
+            assert (await request(port, "POST", "/pause?on=1"))[0] == 409   # not recording
+            await request(port, "POST", "/start")
+            live.tick()
+            assert (await request(port, "POST", "/pause?on=1"))[0] == 200
+            live.tick()
+            assert len(live.history) == 1 and live.status["ride"]["paused"]
+            assert (await request(port, "POST", "/pause?on=0"))[0] == 200
+            live.tick()
+            assert len(live.history) == 2 and not live.status["ride"]["paused"]
+        run(live, steps)
+
     def test_unknown_and_wrong_method(self, live):
         async def steps(port):
             assert (await request(port, "GET", "/start"))[0] == 404
