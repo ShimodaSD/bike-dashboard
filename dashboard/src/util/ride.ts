@@ -65,6 +65,18 @@ export function stats(a: Sample[], ftp: number, before: Sample | null): RideStat
   return out;
 }
 
+// Normalized power (Coggan): 30 s rolling average, raised to the 4th power, averaged, 4th root.
+// Full 30 s windows only, so null under 30 s (same rule as stats() and the logger's .FIT).
+export function npOf(powers: number[]): number | null {
+  if (powers.length < 30) return null;
+  let roll = 0, sum4 = 0, n4 = 0;
+  powers.forEach((p, i) => {
+    roll += p; if (i >= 30) roll -= powers[i - 30];
+    if (i >= 29) { sum4 += Math.pow(roll / 30, 4); n4++; }
+  });
+  return Math.pow(sum4 / n4, 0.25);
+}
+
 // Best average power over any `sec`-second stretch of the ride (null if the ride is shorter).
 export function bestPower(h: Sample[], sec: number) {
   if (h.length < sec) return null;
@@ -83,3 +95,10 @@ export function livePower(now: LiveNow, recent: RecentPower[], smooth: number) {
   const w = recent.filter(x => now.at - x.at < smooth * 1000);
   return w.length ? w.reduce((t, x) => t + x.p, 0) / w.length : now.power_w;
 }
+
+// Calories burned from the work done at the pedals. Gross efficiency measured in cyclists is ~19 %
+// (Med Sci Sports Exerc 2013;45(9):1833-40: energy expenditure = work × 5.3), so 1 kJ of work
+// costs 5.3 kJ = 1.27 kcal. kcal = kJ (24 % efficiency, the bike-computer habit) reads ~20 % low.
+// Same factor as KCAL_PER_KJ in logger/thinkrider_logger.py (the .FIT's total_calories).
+export const KCAL_PER_KJ = 5.3 / 4.184;
+export const kcalOf = (kj: number) => kj * KCAL_PER_KJ;

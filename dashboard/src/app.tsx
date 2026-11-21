@@ -20,7 +20,7 @@ import { ClimbBand, useWorkoutControl, controlKey } from './control/climb';
 import { useLiveFeed, type LiveNow, type RecentPower } from './hooks/feed';
 import { useStored } from './hooks/stored';
 import { useArmed, useEvent } from './hooks/hooks';
-import { ZONES, nz, fmtT, zoneOf, stats, bestPower, tssOf, fmtTss, avg3, livePower, type RideStats } from './util/ride';
+import { ZONES, nz, fmtT, zoneOf, stats, bestPower, tssOf, fmtTss, avg3, livePower, kcalOf, type RideStats } from './util/ride';
 import { Charts } from './charts/charts';
 import { RideReview } from './review/review-panel';
 import { TimeInZone } from './review/zones';
@@ -487,8 +487,8 @@ const Stats = memo(function Stats({ hist, st, ftp, kg, more, setMore, mode }: St
   const avgP = <Tile key="avg" label="Avg power" value={r0(st.avgP)} unit="W" />;
   const maxP = <Tile key="max" label="Max power" value={r0(st.maxP)} unit="W" />;
   const dist = <Tile key="dist" label="Distance" value={(st.dist / 1000).toFixed(2)} unit="km" />;
-  // ~1 kJ of work ≈ 1 kcal burned (≈24 % gross efficiency), so one number covers both
-  const kj = <Tile key="kj" label="Energy" value={Math.round(st.kj)} unit="kJ" sub="≈ kcal burned" />;
+  // calories burned (kcalOf: ~19 % gross efficiency); the work at the pedals stays below
+  const kj = <Tile key="kj" label="Calories" value={Math.round(kcalOf(st.kj))} unit="kcal" sub={`${Math.round(st.kj)} kJ of work`} />;
   const tssT = <Tile key="tss" label="TSS" value={fmtTss(tss)} sub="training stress" />;
   const ifT = <Tile key="if" label="Intensity factor" value={IF ? IF.toFixed(2) : '–'} sub="NP ÷ FTP" />;
   const wkg = <Tile key="wkg" label="W/kg" value={kg ? (p3 / kg).toFixed(2) : '–'} sub={kg ? `at ${kg} kg` : 'Set weight in Settings'} />;

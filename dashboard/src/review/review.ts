@@ -2,16 +2,17 @@
 // samples, the FTP and the workout that was followed. Nothing leaves the machine.
 //
 // What it looks at:
-//   intensity   IF (NP ÷ FTP) names the kind of ride, VI (NP ÷ avg power) says steady or surgy
+//   intensity   IF (NP ÷ FTP) names the kind of ride, VI (NP ÷ avg power, both over every second)
+//               says steady or surgy
 //   load        TSS, with the usual recovery guide (Coggan: < 150 low, 150–300 medium, ...)
 //   zones       where most of the moving time went
-//   heart rate  aerobic decoupling (Pw:HR): power per beat in the first vs second half
+//   heart rate  aerobic decoupling (Pw:HR): efficiency factor (NP ÷ avg HR) in the first vs second half
 //   pacing      power held in the second half (free rides with no HR)
 //   workout     share of seconds within the power target, and the steps that missed it
 //   FTP         a best 20 min (× 0.95) above the saved FTP says the FTP is set too low
 import type { Sample } from '../types/feed';
 import type { Workout } from '../types/workout';
-import { ZONES, bestPower, stats, tssOf, type RideStats } from '../util/ride';
+import { ZONES, bestPower, npOf, stats, tssOf, type RideStats } from '../util/ride';
 import { powerTol } from '../workout/workout';
 
 export type Tone = 'good' | 'info' | 'warn';
@@ -87,7 +88,10 @@ export interface ReviewInput {
 export function reviewRide({ hist, ftp, workout, woStart = 0, ftpTest = false, st: given }: ReviewInput): Review {
   const st = given ?? stats(hist, ftp, null);
   const IF = st.np ? st.np / ftp : null;
-  const VI = st.np && st.avgP ? st.np / st.avgP : null;
+  // VI compares NP with the average over the same seconds: NP counts coasting as 0 W, so the
+  // average must too (st.avgP leaves stopped seconds out and would make a surgy ride look steady)
+  const avgAll = hist.length ? hist.reduce((t, s) => t + (s.power_w || 0), 0) / hist.length : 0;
+  const VI = st.np && avgAll > 0 ? st.np / avgAll : null;
   const tss = tssOf(hist.length, st.np, ftp);
   const tooShort = st.moving < MIN_REVIEW_S;
   const notes: Note[] = [];
@@ -124,7 +128,8 @@ export function reviewRide({ hist, ftp, workout, woStart = 0, ftpTest = false, s
   const steady = VI !== null && VI <= STEADY_VI && !hasIntervals(workout);
   if (body && withHr.length > 0.8 * st.moving) {
     const half = Math.floor(body.length / 2);
-    const efOf = (a: Sample[]) => a.reduce((t, s) => t + s.power_w, 0) / a.reduce((t, s) => t + (s.heart_rate_bpm as number), 0);
+    // efficiency factor of each half: NP ÷ average heart rate (Friel / TrainingPeaks)
+    const efOf = (a: Sample[]) => (npOf(a.map(s => s.power_w)) ?? 0) / (a.reduce((t, s) => t + (s.heart_rate_bpm as number), 0) / a.length);
     const e1 = efOf(body.slice(0, half)), e2 = efOf(body.slice(half));
     decoupling = ((e1 - e2) / e1) * 100;
     // Pw:HR assumes the same effort in both halves: a step up or down in power isn't drift
