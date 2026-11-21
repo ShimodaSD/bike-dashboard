@@ -734,6 +734,8 @@ async def handle_http(reader, writer, live: Live):
                     ctl.set_grade(finite(params["pct"]))
                 elif act == "/power":
                     ctl.set_power(finite(params["w"]))
+                elif act == "/sim" and params and set(params) <= {"difficulty", "crr", "cw"}:
+                    ctl.set_sim(**{k: finite(v) for k, v in params.items()})
                 else:
                     raise ValueError
             except (KeyError, ValueError, OverflowError):
@@ -1204,6 +1206,7 @@ def _read_json(path):
 # --------------------------------------------------------------------------
 DEVICES_FILE = os.path.join(APP_DIR, "devices.json")
 FTP_TESTS_FILE = os.path.join(APP_DIR, "ftp_tests.json")    # FTP test results (ftp_test.py)
+TRAINER_FILE = os.path.join(APP_DIR, "trainer.json")        # climb feel (trainer_control.py)
 
 ROLES = ("trainer", "hr")
 KIND_ORDER = {"trainer": 0, "hr": 1, "other": 2}
@@ -1514,6 +1517,8 @@ async def demo_trainer(live: Live, devices: Devices):
                 c = (t - 300) % 420
                 target = 285 if c < 240 else 155           # 4 min on / 3 min easy
             grade = (ctl.current_grade() if ctl else None) or 0
+            if grade:                                      # the rider feels the trainer's grade
+                grade = ctl.trainer_grade()
             erg = ctl and ctl.enabled and ctl.state == "on" and ctl.mode == "erg"
             if erg:
                 target = ctl.power_w                       # ERG: the trainer holds the power
@@ -1618,7 +1623,7 @@ async def main_async(args):
     live = Live(args.out)
     live.port = args.port
     live.devices = devices = Devices(live, args, demo=args.demo)
-    live.control = DemoControl(live) if args.demo else TrainerControl(live)
+    live.control = DemoControl(live) if args.demo else TrainerControl(live, sim_file=TRAINER_FILE)
     live.ftp_tests = FtpTests(live, FTP_TESTS_FILE, demo=args.demo)
     load_env(os.path.join(ROOT, ".env"))       # ANTHROPIC_API_KEY, GARMIN_API_KEY
     live.coach = Coach()
