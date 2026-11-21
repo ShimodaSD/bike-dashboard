@@ -118,7 +118,7 @@ export function ClimbBand({ ctl, ftp, follow }: { ctl: ControlStatus; ftp: numbe
                 step={5} quick={ergQuick} quickLabel={w => `${w} W`} onSet={sendPower} />
         : <Dial label="Grade" value={ctl.grade} unit="%" fmt={fmtGrade} min={GRADE_MIN} max={GRADE_MAX}
                 step={GRADE_STEP} quick={QUICK} quickLabel={g => `${g} %`} onSet={sendGrade} />)}
-      {!erg && ctl.state !== 'unsupported' && <ClimbFeel sim={ctl.sim} />}
+      {on && !erg && ctl.state !== 'unsupported' && <ClimbFeel sim={ctl.sim} />}
       {on && <p className="climb-foot">
         {follow ? <>{follow} </> : null}
         {!erg && ctl.sim.difficulty !== 100 && <>At {ctl.sim.difficulty} % difficulty

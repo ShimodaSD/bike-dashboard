@@ -63,17 +63,16 @@ describe('workout band', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('off target: yellow band and a big popup', () => {
+  it('off target: yellow band, no pop-up over the tiles (the Power tile shows how far off)', () => {
     render(band({ t: 30, power: 150 }));
     expect(screen.getByRole('region', { name: 'Workout' })).toHaveClass('off');
     expect(screen.getByRole('status')).toHaveTextContent('Too low · -50 W');
-    expect(screen.getByRole('alert')).toHaveTextContent('Push harder');
-    expect(screen.getByRole('alert')).toHaveTextContent('Power 150 · target 200 W');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('cadence too high', () => {
     render(band({ t: 30, cadence: 105 }));
-    expect(screen.getByRole('alert')).toHaveTextContent('Pedal slower');
+    expect(screen.getByRole('status')).toHaveTextContent('Cadence too high · +15 rpm');
   });
 
   it('beeps after more than 7 s off target, then every 15 s, rising tones for too low', () => {

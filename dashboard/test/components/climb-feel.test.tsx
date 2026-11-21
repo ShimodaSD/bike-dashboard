@@ -78,9 +78,9 @@ describe('Trainer control band with a lower difficulty', () => {
     expect(screen.getByText(/At 50 % difficulty/)).toHaveTextContent('the trainer feels 4.0 %');
   });
 
-  it('shows Climb feel on Live in Climb mode and while off, not in ERG', () => {
+  it('shows Climb feel on Live in Climb mode, not while off (one line) or in ERG', () => {
     const { rerender } = render(<ClimbBand ctl={control()} ftp={200} follow={null} />);
-    expect(screen.getByRole('group', { name: 'Climb feel' })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Climb feel' })).toBeNull();
     rerender(<ClimbBand ctl={control({ enabled: true, state: 'on', grade: 8, trainer_grade: 8 })} ftp={200} follow={null} />);
     expect(screen.getByRole('group', { name: 'Climb feel' })).toBeInTheDocument();
     expect(screen.queryByText(/% difficulty/)).toBeNull();          // 100 %: nothing to explain

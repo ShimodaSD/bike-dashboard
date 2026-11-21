@@ -80,6 +80,7 @@ except ImportError:                       # --demo works without bleak
 
 from trainer_control import TrainerControl, DemoControl, CONTROL_POINT  # noqa: E402 (logger/)
 from ftp_test import FtpTests  # noqa: E402 (logger/)
+import workout_store  # noqa: E402 (logger/)
 from coach import Coach, CoachError  # noqa: E402 (logger/)
 from garmin_rides import GarminError  # noqa: E402 (logger/)
 from env import load_env  # noqa: E402 (logger/)
@@ -372,6 +373,7 @@ class Live:
         self.quit = None               # stops the logger (Stop button, closed launcher window)
         self.control = None            # TrainerControl / DemoControl: climb simulation, ERG
         self.ftp_tests = None          # FtpTests: guided FTP test and its saved results
+        self.workout = None            # WorkoutStore: the loaded workout, shared by every browser
         self.coach = None              # Coach: optional Claude evaluation of a ride (coach.py)
 
     # -- ride control (Start / Finish buttons) ------------------------------
@@ -795,6 +797,17 @@ async def handle_http(reader, writer, live: Live):
                 body, ctype, code = json.dumps({"error": str(e)}).encode(), "application/json", "503 Service Unavailable"
             except ValueError:
                 body, ctype, code = json.dumps({"error": "Bad activity id."}).encode(), "application/json", "400 Bad Request"
+        elif path == "/workout" and method == "POST" and live.workout:
+            # Load (JSON body from the dashboard) or remove (empty body) the workout
+            try:
+                n = int(headers.get("content-length", "0"))
+                if not 0 <= n <= workout_store.MAX_BODY:
+                    raise ValueError("bad length")
+                live.workout.set(json.loads(await reader.readexactly(n)) if n else None)
+                body, code = b"ok", "200 OK"
+            except (ValueError, asyncio.IncompleteReadError):
+                body, code = b"bad request", "400 Bad Request"
+            ctype = "text/plain"
         elif path == "/pause" and method == "POST":
             # Pause / continue the ride in progress: /pause?on=1 or /pause?on=0
             ok = live.set_paused(params.get("on") == "1")
@@ -1207,6 +1220,7 @@ def _read_json(path):
 DEVICES_FILE = os.path.join(APP_DIR, "devices.json")
 FTP_TESTS_FILE = os.path.join(APP_DIR, "ftp_tests.json")    # FTP test results (ftp_test.py)
 TRAINER_FILE = os.path.join(APP_DIR, "trainer.json")        # climb feel (trainer_control.py)
+WORKOUT_FILE = os.path.join(APP_DIR, "workout.json")        # the loaded workout (workout_store.py)
 
 ROLES = ("trainer", "hr")
 KIND_ORDER = {"trainer": 0, "hr": 1, "other": 2}
@@ -1625,6 +1639,7 @@ async def main_async(args):
     live.devices = devices = Devices(live, args, demo=args.demo)
     live.control = DemoControl(live) if args.demo else TrainerControl(live, sim_file=TRAINER_FILE)
     live.ftp_tests = FtpTests(live, FTP_TESTS_FILE, demo=args.demo)
+    live.workout = workout_store.WorkoutStore(live, WORKOUT_FILE, demo=args.demo)
     load_env(os.path.join(ROOT, ".env"))       # ANTHROPIC_API_KEY, GARMIN_API_KEY
     live.coach = Coach()
     live.status["coach"] = live.coach.status()

@@ -115,7 +115,8 @@ describe('recording', () => {
   it('a lap flashes "Lap 2 started"', async () => {
     await renderApp(recording(), ride(Array(10).fill(200)));
     latestStream().emit('laps', [0, 10]);
-    expect(screen.getByText('Lap 2 started')).toBeInTheDocument();
+    expect(document.querySelector('.strip')).toHaveTextContent('Lap 2 started');          // read out
+    expect(document.querySelector('.lapnow')).toHaveTextContent('Lap 2 started');      // and seen in Ride time
   });
 
   it('Start on another page goes back to the live numbers', async () => {
@@ -174,12 +175,30 @@ describe('workout targets on the tiles', () => {
   it('shows the target now next to the live number, coloured when off', async () => {
     sweetSpot();
     await renderApp(recording(), ride(Array(40).fill(150), { cadence_rpm: 91, heart_rate_bpm: 150 }));
-    const power = screen.getByText('Power').closest('.tile')!;
+    const power = screen.getByText('Power · 3 s').closest('.tile')!;          // one number for power and target
     expect(power.querySelector('.tgt')).toHaveTextContent('Target 180 W');
     expect(power.querySelector('.tgt')).toHaveClass('low');                  // 150 W vs 180 W
+    expect(power.querySelector('.delta')).toHaveTextContent('−30 W push harder');   // big, under the number
+    expect(power).toHaveClass('off');                                        // amber frame
+    expect(screen.getByText('Cadence').closest('.tile')).not.toHaveClass('off');
     expect(screen.getByText('Cadence').closest('.tile')!.querySelector('.tgt')).toHaveClass('ok');
     expect(screen.getByText('Heart rate').closest('.tile')!.querySelector('.tgt')).toHaveTextContent('150 bpm');
     expect(screen.getByText('Speed').closest('.tile')!.querySelector('.tgt')).toBeNull();   // no speed target
+  });
+
+  it('the workout comes from the logger, so a phone follows the laptop', async () => {
+    const wo = { name: 'From the laptop', total: 600, segs: [{ dur: 600, lo: 0.9, hi: 0.9, unit: 'ftp' as const, cad: null, name: 'Steady' }] };
+    await renderApp(recording({ workout: wo }), ride(Array(40).fill(180)));
+    expect(screen.getByRole('region', { name: 'Workout' })).toHaveTextContent('From the laptop');
+    expect(document.querySelector('.hero .power .delta')).toHaveTextContent('On target');
+  });
+
+  it('loading or removing a workout goes to the logger', async () => {
+    const wo = { name: 'Sweet spot', total: 600, segs: [{ dur: 600, lo: 0.9, hi: 0.9, unit: 'ftp' as const, cad: null, name: 'Steady' }] };
+    const user = await renderApp(status({ workout: wo }), ride([]));
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+    const call = vi.mocked(fetch).mock.calls.find(c => c[0] === '/workout');
+    expect(call?.[1]).toMatchObject({ method: 'POST', body: '' });
   });
 
   it('no targets without a workout or before Start', async () => {
