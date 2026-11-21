@@ -511,7 +511,7 @@ const Stats = memo(function Stats({ hist, st, ftp, kg, more, setMore, mode }: St
   const avgP = <Tile key="avg" label="Avg power" value={r0(st.avgP)} unit="W" />;
   const maxP = <Tile key="max" label="Max power" value={r0(st.maxP)} unit="W" />;
   const dist = <Tile key="dist" label="Distance" value={(st.dist / 1000).toFixed(2)} unit="km" />;
-  // ~1 kJ of work at the pedals ≈ 1 kcal burned (≈24 % gross efficiency); the work stays below
+  // calories burned (kcalOf: ~19 % gross efficiency); the work at the pedals stays below
   const kj = <Tile key="kj" label="Calories" value={Math.round(kcalOf(st.kj))} unit="kcal" sub={`${Math.round(st.kj)} kJ of work`} />;
   const tssT = <Tile key="tss" label="TSS" value={fmtTss(tss)} sub="training stress" />;
   const ifT = <Tile key="if" label="Intensity factor" value={IF ? IF.toFixed(2) : '–'} sub="NP ÷ FTP" />;

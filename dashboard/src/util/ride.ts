@@ -84,6 +84,9 @@ export function livePower(now: LiveNow, recent: RecentPower[], smooth: number) {
   return w.length ? w.reduce((t, x) => t + x.p, 0) / w.length : now.power_w;
 }
 
-// Calories burned from the work done at the pedals: at ~24 % gross efficiency 1 kJ of work costs
-// 1 / 0.24 ≈ 4.2 kJ of food energy ≈ 1 kcal, so the estimate most bike computers use is kcal = kJ.
-export const kcalOf = (kj: number) => kj;
+// Calories burned from the work done at the pedals. Gross efficiency measured in cyclists is ~19 %
+// (Med Sci Sports Exerc 2013;45(9):1833-40: energy expenditure = work × 5.3), so 1 kJ of work
+// costs 5.3 kJ = 1.27 kcal. kcal = kJ (24 % efficiency, the bike-computer habit) reads ~20 % low.
+// Same factor as KCAL_PER_KJ in logger/thinkrider_logger.py (the .FIT's total_calories).
+export const KCAL_PER_KJ = 5.3 / 4.184;
+export const kcalOf = (kj: number) => kj * KCAL_PER_KJ;

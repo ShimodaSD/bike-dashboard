@@ -203,7 +203,7 @@ describe('finished', () => {
   it('shows the ride summary', async () => {
     await renderApp(finished(), ride(Array(120).fill(180)));
     expect(screen.getByText('Avg power · ride')).toBeInTheDocument();
-    expect(screen.getByText('Calories').closest('.tile')).toHaveTextContent('22kcal22 kJ of work');
+    expect(screen.getByText('Calories').closest('.tile')).toHaveTextContent('27kcal22 kJ of work');
     expect(screen.getByText('Best 1 min').closest('.tile')).toHaveTextContent('180W');
   });
 });
