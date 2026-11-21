@@ -39,6 +39,7 @@ export interface RideStatus {
   state: RideState;
   n: number;                         // ride number since the logger started
   fit: string | null;                // the finished ride's .FIT file name
+  paused?: boolean;                  // Pause pressed: the timer stops, nothing is recorded
   dir: string;                       // ride folder name
 }
 

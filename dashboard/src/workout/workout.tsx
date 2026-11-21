@@ -113,6 +113,31 @@ export function plannedLine(wo: Workout, ftp: number, key: SeriesKey): PlanPoint
 
 type Reading = number | null | undefined;
 
+// What the workout expects right now, one entry per live tile (Hero in app.tsx), with how the
+// reading compares: low / high (same tolerances as the beep), ok, or wait (the step's first
+// seconds, no reading yet, or the ride is paused). Only the targets the step has are set.
+export type TargetState = 'low' | 'high' | 'ok' | 'wait';
+export interface TileTarget { v: number; unit: string; state: TargetState }
+export interface TileTargets {
+  power_w?: TileTarget; cadence_rpm?: TileTarget; heart_rate_bpm?: TileTarget; speed_kmh?: TileTarget;
+  grade?: number;                                  // %, shown with the power target
+}
+export function tileTargets(at: WorkoutAt | null, power: Reading, cadence: Reading, hr: Reading, speed: Reading,
+                            paused = false): TileTargets {
+  if (!at) return {};
+  const one = (target: number, v: Reading, tol: number, unit: string, grace = GRACE_S): TileTarget => ({
+    v: target, unit,
+    state: paused || v == null || at.into < grace ? 'wait' : v < target - tol ? 'low' : v > target + tol ? 'high' : 'ok',
+  });
+  const out: TileTargets = {};
+  if (at.target != null) out.power_w = one(at.target, power, powerTol(at.target), 'W');
+  if (at.s.cad) out.cadence_rpm = one(at.s.cad, cadence, CAD_TOL, 'rpm');
+  if (at.s.hr) out.heart_rate_bpm = one(at.s.hr, hr, HR_TOL, 'bpm', HR_GRACE_S);
+  if (at.s.spd) out.speed_kmh = one(at.s.spd, speed, SPEED_TOL, 'km/h');
+  if (at.s.grade != null) out.grade = at.s.grade;
+  return out;
+}
+
 export function offTarget(at: WorkoutAt | null, power: Reading, cadence: Reading, hr: Reading, speed: Reading): OffKind | null {
   if (!at || at.into < GRACE_S) return null;
   if (at.target != null && power != null) {
@@ -238,11 +263,12 @@ function targetText(at: WorkoutAt): ReactNode {
 interface WorkoutBandProps {
   wo: Workout; t: number; mode: 'ready' | 'recording' | 'finished'; ftp: number;
   power: Reading; cadence: Reading; hr: Reading; speed: Reading; sound: boolean;
+  paused?: boolean;                                 // ride paused: the step waits, no off target, no beep
   onRemove?: () => void;                            // no Remove button without it (FTP test)
 }
-export function WorkoutBand({ wo, t, mode, ftp, power, cadence, hr, speed, sound, onRemove }: WorkoutBandProps) {
+export function WorkoutBand({ wo, t, mode, ftp, power, cadence, hr, speed, sound, paused = false, onRemove }: WorkoutBandProps) {
   const at = mode === 'ready' ? workoutAt(wo, 0, ftp) : workoutAt(wo, t, ftp);
-  const off = mode === 'recording' ? offTarget(at, power, cadence, hr, speed) : null;
+  const off = mode === 'recording' && !paused ? offTarget(at, power, cadence, hr, speed) : null;
   const d = off && at ? offDetail(off, at, power, cadence, hr, speed) : null;   // offTarget is null without a step
   // Sound is an outside system: the effect checks on each change (every packet / second) how long
   // the rider has been off target. Back on target resets the clock.
@@ -267,8 +293,9 @@ export function WorkoutBand({ wo, t, mode, ftp, power, cadence, hr, speed, sound
           <span className="wo-step">Step {at.i + 1}/{wo.segs.length} · {at.s.name}</span>
           <span className="wo-target">{targetText(at)}</span>
           <span className="wo-left">{fmt(at.left)} left</span>
-          <span className={'wo-state ' + (off ? 'bad' : 'ok')} role="status">
+          <span className={'wo-state ' + (paused ? 'paused' : off ? 'bad' : 'ok')} role="status">
             {mode === 'ready' ? 'Starts when you press Start'
+              : paused ? 'Paused · carries on when you resume'
               : off ? `${MSG[off]}${d && d.v != null ? ` · ${signed(Math.round(d.v - d.target))} ${d.unit}` : ''}`
               : !hasTarget(at.s) ? 'Your pace'
               : at.into < (at.s.hr && at.target == null ? HR_GRACE_S : GRACE_S) ? 'Get to the target' : 'On target'}</span>
