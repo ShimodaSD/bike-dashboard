@@ -127,7 +127,15 @@ Garmin: Import Data). There is no automatic upload: Strava's API needs a paid su
 `dashboard/dashboard.html` is served by the script at http://localhost:8000. It shows power
 (3 s), cadence, speed, heart rate, power zones, NP / IF / TSS, W/kg, laps and live
 power / cadence / HR / speed charts. While recording it shows a red REC strip and frame;
-after Finish it shows the ride's summary. Keys: `S` start, `L` lap, `F` twice to
+after Finish it shows the ride's summary and a **Ride review**: what kind of ride it was
+(from IF), the load and how long recovery usually takes (from TSS), where the time went by zone,
+heart-rate drift against power on steady rides, pacing, how much of a workout was on target and
+which steps missed, and a hint when a best 20 min says your FTP is set too low. It is worked
+out in the browser from the ride, your FTP and the loaded workout; nothing is sent anywhere.
+**Review a ride file** (on the Preview strip, or Settings › Past rides) gives the same review for a
+ride you already did: a `.fit` (this logger, Garmin, Wahoo, Zwift, Strava's Export original), a
+`.tcx`, a `.gpx` with power, or this logger's `session_1hz.csv`. The file is read in the browser
+and nothing is saved; the trainer doesn't need to be on. Keys: `S` start, `L` lap, `F` twice to
 finish, `Esc` closes Devices / Settings. FTP, weight, workout, CSV export and **Clear all
 data** (only between rides) are under **Settings**; FTP,
 weight and chart window are remembered in the browser.

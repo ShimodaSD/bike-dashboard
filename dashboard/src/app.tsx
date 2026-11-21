@@ -22,6 +22,9 @@ import { useStored } from './hooks/stored';
 import { useArmed, useEvent } from './hooks/hooks';
 import { ZONES, nz, fmtT, zoneOf, stats, bestPower, tssOf, fmtTss, avg3, livePower, type RideStats } from './util/ride';
 import { Charts } from './charts/charts';
+import { RideReview } from './review/review-panel';
+import { TimeInZone } from './review/zones';
+import { ReviewFile } from './import/review-file';
 import { FtpTestBand, FtpTestSettings, protocolWorkout, startFtpTest, type FtpTestSettingsProps } from './ftp/ftp';
 import type { DeviceChoice, DeviceKind, DeviceRole, FoundDevice, HrState, HrStatus, LiveValues, RideState,
   RideStatus, Sample, ScanStatus, Status, TrainerState } from './types/feed';
@@ -29,7 +32,7 @@ import type { Workout } from './types/workout';
 import type { WorkoutSettingsProps } from './workout/workout';
 
 type Mode = RideState;                   // what the page shows: ready (preview), recording, finished
-type Panel = 'devices' | 'settings';
+type Panel = 'devices' | 'settings' | 'review';
 type LiveRate = 'auto' | 'fast' | 'saver';
 // Which Download / Send buttons were used, for which .fit
 interface Sent { fit: string | null; to: string[] }
@@ -129,7 +132,7 @@ export function Header({ status, ride, act, panel, toggle }: HeaderProps) {
 // ------------------------------------------------------------------ drawer: Devices or Settings, one at a time
 // Floats over the page instead of pushing it down, so the live numbers never move mid-ride.
 // Not a modal: the page behind keeps updating and stays usable. Esc or Close puts focus back.
-function Drawer({ id, title, onClose, children }: { id: string; title: string; onClose: () => void; children: ReactNode }) {
+function Drawer({ id, title, onClose, wide, children }: { id: string; title: string; onClose: () => void; wide?: boolean; children: ReactNode }) {
   const ref = useRef<HTMLElement>(null);
   const close = useEvent(onClose);
   useEffect(() => {      // focus moves in while open and back out on close; Esc works anywhere on the page
@@ -140,7 +143,7 @@ function Drawer({ id, title, onClose, children }: { id: string; title: string; o
     return () => { document.removeEventListener('keydown', k); if (back && back.focus) back.focus(); };
   }, [close]);
   return (
-    <aside className="drawer" id={id} aria-label={title} tabIndex={-1} ref={ref}>
+    <aside className={'drawer' + (wide ? ' wide' : '')} id={id} aria-label={title} tabIndex={-1} ref={ref}>
       <div className="drawer-head">
         <h2>{title}</h2>
         <button className="quiet" onClick={onClose}>Close <Kbd k="Esc" /></button>
@@ -201,11 +204,11 @@ function WeightField({ kg, setKg }: { kg: number | null; setKg: (v: number | nul
 
 interface SettingsProps {
   ftp: number; setFtp: (v: number) => void; kg: number | null; setKg: (v: number | null) => void;
-  onCsv: () => void; canCsv: boolean; smooth: number; setSmooth: (v: number) => void;
+  onCsv: () => void; canCsv: boolean; onReviewFile: () => void; smooth: number; setSmooth: (v: number) => void;
   liveRate: LiveRate; setLiveRate: (v: LiveRate) => void; recording: boolean; workout: WorkoutSettingsProps;
   ftpTest?: FtpTestSettingsProps;
 }
-export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, workout, ftpTest }: SettingsProps) {
+export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, onReviewFile, smooth, setSmooth, liveRate, setLiveRate, recording, workout, ftpTest }: SettingsProps) {
   return (
     <section className="settings">
       <FtpField key={ftp} ftp={ftp} setFtp={setFtp} />
@@ -244,6 +247,11 @@ export function Settings({ ftp, setFtp, kg, setKg, onCsv, canCsv, smooth, setSmo
         <span className="flabel">This ride</span>
         <div className="inline"><button onClick={onCsv} disabled={!canCsv}>Export CSV</button></div>
         <p className="help">The logger also writes a CSV and a .FIT file to its ride folder.</p>
+      </div>
+      <div className="field">
+        <span className="flabel">Past rides</span>
+        <div className="inline"><button onClick={onReviewFile}>Review a ride file</button></div>
+        <p className="help">Evaluate a ride you already did from its .fit, .tcx, .gpx or CSV file.</p>
       </div>
       <div className="field">
         <span className="flabel">Clear data</span>
@@ -497,27 +505,7 @@ const Stats = memo(function Stats({ hist, st, ftp, kg, more, setMore, mode }: St
   );
 });
 
-// ------------------------------------------------------------------ side panels
-const TimeInZone = memo(function TimeInZone({ st, ftp }: { st: RideStats; ftp: number }) {
-  const tot = st.tiz.reduce((a, b) => a + b, 0) || 1, mx = Math.max(...st.tiz, 1);
-  return (
-    <div className="panel">
-      <h2>Time in power zone</h2>
-      <div className="tiz">
-        {ZONES.map((z, i) => {
-          const lo = Math.round(z.lo * ftp), hi = z.hi === Infinity ? null : Math.round(z.hi * ftp) - 1;
-          return (
-            <div className="r" key={z.n}>
-              <span className="name">{z.n} {z.name}<small>{lo}{hi !== null ? '–' + hi : '+'} W</small></span>
-              <span className="bar"><i style={{ width: `${(st.tiz[i] / mx) * 100}%`, background: `var(--z${i + 1})` }} /></span>
-              <span className="v">{fmtT(st.tiz[i])} <span className="pct">{Math.round((st.tiz[i] / tot) * 100)}%</span></span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-});
+// ------------------------------------------------------------------ side panels (TimeInZone: review/zones.tsx)
 
 interface LapsProps {
   hist: Sample[]; laps: number[]; ftp: number; recording: boolean;
@@ -570,9 +558,10 @@ interface RideStripProps {
   ride: Partial<RideStatus>; seconds: number; startArmed: boolean; lapFlash: number; sent: Sent;
   onDownload: (...to: string[]) => void;
   onFtpTest?: () => void;                           // Start FTP test (ready state)
+  onReviewFile?: () => void;                        // Review a ride file (ready state)
   ftpTest?: boolean;                                // this ride is an FTP test
 }
-export function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownload, onFtpTest, ftpTest }: RideStripProps) {
+export function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownload, onFtpTest, onReviewFile, ftpTest }: RideStripProps) {
   const dir = ride.dir ? `${ride.dir}/` : 'the ride folder';
   let cls = 'ready', body: ReactNode;
   if (ride.state === 'recording') {
@@ -603,7 +592,10 @@ export function RideStrip({ ride, seconds, startArmed, lapFlash, sent, onDownloa
   } else {
     body = <><span className="badge">Preview</span>
       <span>Live numbers only. Nothing is saved until you press <b>Start</b>.</span>
-      {onFtpTest && <button className="ftp-start" onClick={onFtpTest}>Start FTP test</button>}</>;
+      <span className="strip-acts">
+        {onReviewFile && <button className="quiet" onClick={onReviewFile}>Review a ride file</button>}
+        {onFtpTest && <button onClick={onFtpTest}>Start FTP test</button>}
+      </span></>;
   }
   return <div className={'strip ' + cls} role="status" aria-live="polite">{body}</div>;
 }
@@ -722,14 +714,16 @@ export function App() {
       {panel === 'devices' && <Drawer id="devices" title="Devices" onClose={closePanel}>
         <Devices status={status} recording={mode === 'recording'} /></Drawer>}
       {panel === 'settings' && <Drawer id="settings" title="Settings" onClose={closePanel}><Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} smooth={smooth} setSmooth={setSmooth} liveRate={liveRate} setLiveRate={setLiveRate}
-                                 onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} recording={mode === 'recording'}
+                                 onCsv={() => exportCsv(hist)} canCsv={hist.length > 0} onReviewFile={() => setPanel('review')} recording={mode === 'recording'}
                                  workout={{ wo, setWo, sound: woSound, setSound: setWoSound }}
                                  ftpTest={{ ftpStatus, ftp, setFtp, recording: mode === 'recording', startArmed: testArmed, onStart: startTest }} /></Drawer>}
+      {panel === 'review' && <Drawer id="review-file" title="Review a ride file" onClose={closePanel} wide>
+        <ReviewFile ftp={ftp} /></Drawer>}
       {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
       <RideStrip ride={ride} seconds={hist.length} startArmed={startArmed} lapFlash={lapFlash}
                  sent={sent || NOT_SENT} onDownload={markSent} ftpTest={testing}
-                 onFtpTest={ftpStatus && online ? startTest : undefined} />
+                 onFtpTest={ftpStatus && online ? startTest : undefined} onReviewFile={() => setPanel('review')} />
       {ftpStatus && ftpRun && mode !== 'ready' && <FtpTestBand ftpStatus={ftpStatus} hist={hist} mode={mode} ftp={ftp} setFtp={setFtp} />}
       {showCtl && <ClimbBand ctl={ctl} ftp={ftp} follow={woDrives} />}
       {activeWo && mode !== 'finished' ? <WorkoutBand wo={activeWo} t={Math.max(0, hist.length - (testing ? ftpRun?.t0 ?? 0 : 0))} mode={mode} ftp={ftp} sound={woSound}
@@ -738,6 +732,7 @@ export function App() {
                             cadence={fresh ? now.cadence_rpm : last ? last.cadence_rpm : null}
                             hr={fresh ? now.heart_rate_bpm : last ? last.heart_rate_bpm : null}
                             speed={fresh ? now.speed_kmh : last ? last.speed_kmh : null} /> : null}
+      {mode === 'finished' && hist.length > 0 && <RideReview hist={hist} st={st} ftp={ftp} workout={wo} woStart={0} ftpTest={!!ftpRun} />}
       <Hero hist={hist} laps={laps} st={st} ftp={ftp} preview={mode === 'recording' ? null : preview} mode={mode}
             now={now} recent={recent} smooth={smooth} />
       <Stats hist={hist} st={st} ftp={ftp} kg={kg} more={more} setMore={setMore} mode={mode} />
