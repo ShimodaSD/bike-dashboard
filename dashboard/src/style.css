@@ -125,8 +125,13 @@ input[aria-invalid=true] { border-color: var(--critical); }
            padding: 16px 18px; margin-bottom: 12px; }
 .devices .flabel { display: block; font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
 .devices .inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-.slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; align-content: start; }
+.slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px 24px; align-content: start; }
 .slot { min-width: 0; }
+/* slot buttons stacked at the column's full width, so both columns line up and a long
+   device name shortens with an ellipsis instead of pushing into the next column */
+.slot-act { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.slot-act button { width: 100%; min-width: 0; }
+.slot-act button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .slot-dev { display: flex; align-items: center; gap: 8px; font-size: 16px; min-width: 0; }
 .slot-dev b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nearby { min-width: 0; }

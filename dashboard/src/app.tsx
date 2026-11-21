@@ -331,19 +331,20 @@ function Slot({ role, status, recording }: { role: DeviceRole; status: Partial<S
   const choice: Partial<DeviceChoice> = status.devices?.[role] || {};
   const confirm = role === 'trainer' && recording && info.on;      // dropping the trainer pauses the ride
   const [armed, press] = useArmed(info.text);
+  const searchLabel = choice.address ? `Search for ${choice.name || 'it'}` : 'Turn search on';
   const off = () => confirm ? press(() => post(`/devices/off?role=${role}`)) : post(`/devices/off?role=${role}`);
   return (
     <div className="slot">
       <span className="flabel">{ROLE[role].title}</span>
-      <div className="slot-dev"><span className="dot" style={{ background: `var(${info.dot})` }} /><b>{info.name}</b></div>
+      <div className="slot-dev"><span className="dot" style={{ background: `var(${info.dot})` }} /><b title={info.name ?? undefined}>{info.name}</b></div>
       <p className="help">{info.text}</p>
-      <div className="inline">
+      <div className="slot-act">
         {info.off ? <>
-            <button className="primary" onClick={() => post(`/devices/search?role=${role}`)}>
-              {choice.address ? `Search for ${choice.name || 'it'}` : 'Turn search on'}</button>
-            {choice.address && <button onClick={() => post(`/devices/auto?role=${role}`)}>Search for any</button>}
+            <button className="primary" onClick={() => post(`/devices/search?role=${role}`)} title={searchLabel}>
+              <span>{searchLabel}</span></button>
+            {choice.address && <button onClick={() => post(`/devices/auto?role=${role}`)}><span>Search for any</span></button>}
           </> : <button className={armedCls(armed)} onClick={off}>
-            {armed ? `${PRESS} again (pauses the ride)` : info.on ? 'Disconnect and stop searching' : 'Stop searching'}</button>}
+            <span>{armed ? `${PRESS} again (pauses the ride)` : info.on ? 'Disconnect and stop searching' : 'Stop searching'}</span></button>}
       </div>
       {!info.on && !info.off && <p className="help">{ROLE[role].tip}</p>}
     </div>
