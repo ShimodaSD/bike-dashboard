@@ -1,5 +1,6 @@
-// Ride timeline: power, cadence, heart rate and speed as four uPlot charts that share one
-// crosshair. "Whole ride" can be zoomed (drag across a chart, pinch, or ctrl + scroll) and
+// Ride timeline: power large, cadence and heart rate as thin strips under it, three uPlot charts
+// that share one crosshair. Speed has no chart: on a trainer it is worked out from power, so it
+// would repeat the power line (it stays in the tile and the tooltip). "Whole ride" can be zoomed (drag across a chart, pinch, or ctrl + scroll) and
 // panned (sideways swipe); double-click or Reset zoom goes back to the whole ride.
 import { memo, useState, useEffect, useRef, useMemo, useCallback, type RefObject } from 'react';
 import { plannedLine, powerTol, CAD_TOL, HR_TOL, SPEED_TOL } from '../workout/workout';
@@ -12,24 +13,25 @@ import type { Sample, SeriesKey } from '../types/feed';
 import type { PlanPoint, Workout } from '../types/workout';
 
 const CHARTS: ChartDef[] = [
-  { key: 'power_w', color: '--power', fill: true, min: 0, floorMax: 300, ftpRef: true, title: 'Power (W) · dashed line = FTP', name: 'Power', unit: 'W', h: 170 },
-  { key: 'cadence_rpm', color: '--cadence', min: 0, floorMax: 120, title: 'Cadence (rpm)', name: 'Cadence', unit: 'rpm', h: 100 },
-  { key: 'heart_rate_bpm', color: '--hr', autoMin: true, floorMax: 160, title: 'Heart rate (bpm)', name: 'Heart rate', unit: 'bpm', h: 100 },
-  { key: 'speed_kmh', color: '--speed', min: 0, floorMax: 40, title: 'Speed (km/h)', name: 'Speed', unit: 'km/h', h: 124, xaxis: true },
+  { key: 'power_w', color: '--power', fill: true, min: 0, floorMax: 300, ftpRef: true, title: 'Power (W) · dashed line = FTP', name: 'Power', unit: 'W', h: 240 },
+  { key: 'cadence_rpm', color: '--cadence', autoMin: true, floorMax: 100, title: 'Cadence (rpm)', name: 'Cadence', unit: 'rpm', h: 72, ticks: 2 },
+  { key: 'heart_rate_bpm', color: '--hr', autoMin: true, floorMax: 160, title: 'Heart rate (bpm)', name: 'Heart rate', unit: 'bpm', h: 94, ticks: 2, xaxis: true },
 ];
 const TOL: Record<SeriesKey, (v: number) => number> = { power_w: powerTol, cadence_rpm: () => CAD_TOL, heart_rate_bpm: () => HR_TOL, speed_kmh: () => SPEED_TOL };
 
 // Whole ride until it is longer than the window, then the last `win` seconds.
-// With a workout loaded the axis also shows what is coming: the whole plan, or the
-// next third of the window.
-function xRange(n: number, win: number, planEnd = 0): [number, number] {
+// With a workout loaded the axis also shows what is coming: the whole plan ("Whole ride"), or
+// the next minutes (a third of the window, at most 5 min). Early in a ride the window grows with
+// it, so the ride so far isn't squeezed into the left edge of an empty 20 minutes.
+export function xRange(n: number, win: number, planEnd = 0): [number, number] {
   if (!planEnd) {
     if (win && n > win) return [n - win, n - 1];
     return [0, Math.max(n - 1, 59)];
   }
   if (!win) return [0, Math.max(n - 1, planEnd, 59)];
-  const x0 = Math.max(0, Math.round(n - (win * 2) / 3));
-  return [x0, x0 + win - 1];
+  const ahead = Math.min(300, Math.round(win / 3));
+  if (n + ahead <= win) return [0, Math.min(Math.max(n + ahead, 120), planEnd + 30, win) - 1];
+  return [n + ahead - win, n + ahead - 1];
 }
 
 // y axis for the samples and targets in view: floor maximum, FTP headroom, round steps
@@ -47,7 +49,7 @@ function yRange(c: ChartDef, hist: Sample[], x0: number, x1: number, ftp: number
     ymin = n ? Math.max(0, Math.floor((vmin - 10) / 20) * 20) : 60;
     for (const p of inView) ymin = Math.min(ymin, Math.max(0, Math.floor((Math.min(p.a, p.b) - 15) / 20) * 20));
   }
-  const step = niceStep(ymax - ymin, 4);
+  const step = niceStep(ymax - ymin, c.ticks ?? 4);
   return { ymin, ymax: Math.ceil(ymax / step) * step, step, n };
 }
 
@@ -91,7 +93,7 @@ const Chart = memo(function Chart({ c, hist, laps, ftp, version, x0, x1, workout
   return (
     <div className="chart">
       <div className="title"><span className="key" style={{ background: `var(${c.color})` }} />{c.title}
-        {plan.length > 0 && <span className="plan-key"><span className="key" />workout target (shaded = on target)</span>}</div>
+        {plan.length > 0 && <span className="plan-key"><span className="key" />{c.ftpRef ? 'workout target, in its zone colour (band = on target)' : 'workout target (band = on target)'}</span>}</div>
       <div className={'plot' + (zoomable ? ' zoomable' : '')} ref={ref} style={{ height: c.h }}
            role="img" aria-label={chartSummary(c, hist)} />
     </div>

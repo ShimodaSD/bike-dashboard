@@ -39,7 +39,7 @@ test('start, lap, finish, download the .FIT, resume', async ({ page, request }) 
   await expect(rideTime(page)).toHaveText(/0:0[3-9]/, { timeout: 8000 });
 
   await page.getByRole('button', { name: /^Lap/ }).click();
-  await expect(page.getByText(/Lap 2 started/)).toBeVisible();
+  await expect(page.getByLabel('Current lap')).toContainText('Lap 2 started');   // seen in Ride time (the strip reads it out)
   await expect(page.getByLabel('Current lap')).toContainText('Lap 2');
   await expect(page.getByRole('img', { name: /^Power over/ })).toHaveAttribute('aria-label', /now \d+ W/);
   await page.waitForTimeout(2500);
@@ -85,7 +85,7 @@ test('keyboard: S, L, F F', async ({ page, isMobile }) => {
   await expect(strip(page)).toContainText('Recording ride');
   await expect(rideTime(page)).toHaveText(/0:0[2-9]/, { timeout: 6000 });
   await page.keyboard.press('l');
-  await expect(page.getByText(/Lap 2 started/)).toBeVisible();
+  await expect(page.getByLabel('Current lap')).toContainText('Lap 2 started');   // seen in Ride time (the strip reads it out)
   await page.keyboard.press('f');
   await page.waitForTimeout(600);
   await page.keyboard.press('f');

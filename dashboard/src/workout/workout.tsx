@@ -220,7 +220,7 @@ function segText(s: Segment, ftp: number) {
   return parts.join(' · ') || s.name;
 }
 
-// What is off, for the band and the popup: actual, target and unit.
+// What is off, for the band: actual, target and unit.
 interface OffDetail { v: Reading; target: number; unit: string; what: string }
 function offDetail(off: OffKind, at: WorkoutAt, power: Reading, cadence: Reading, hr: Reading, speed: Reading): OffDetail {
   if (off.startsWith('spd')) return { v: speed, target: at.s.spd!, unit: 'km/h', what: 'Speed' };
@@ -301,7 +301,6 @@ export function WorkoutBand({ wo, t, mode, ftp, power, cadence, hr, speed, sound
               : at.into < (at.s.hr && at.target == null ? HR_GRACE_S : GRACE_S) ? 'Get to the target' : 'On target'}</span>
           {at.next && <span className="wo-next">Next: {segText(at.next, ftp)} for {fmt(at.next.dur)}</span>}
         </div>)}
-      {off && d && <OffPopup off={off} d={d} />}
       <svg className="wo-profile" viewBox={`0 0 ${wo.total} 100`} preserveAspectRatio="none" aria-hidden="true">
         {wo.segs.map((s, i) => {
           const y0 = 100 - (prof.v(s) / max) * 92, y1 = 100 - (prof.v(s, true) / max) * 92;
@@ -313,29 +312,6 @@ export function WorkoutBand({ wo, t, mode, ftp, power, cadence, hr, speed, sound
         {mode !== 'ready' && <line x1={Math.min(t, wo.total)} x2={Math.min(t, wo.total)} y1="0" y2="100" vectorEffect="non-scaling-stroke" />}
       </svg>
     </section>
-  );
-}
-
-// Big popup while off target, readable from the bike. It closes by itself once back on target.
-const POP: Record<OffKind, [string, string]> = {
-  low: ['Push harder', '↑'], high: ['Ease off', '↓'],
-  'cad-low': ['Pedal faster', '↑'], 'cad-high': ['Pedal slower', '↓'],
-  'hr-low': ['Push harder', '↑'], 'hr-high': ['Ease off', '↓'],
-  'spd-low': ['Go faster', '↑'], 'spd-high': ['Slow down', '↓'],
-};
-function OffPopup({ off, d }: { off: OffKind; d: OffDetail }) {
-  const [title, arrow] = POP[off];
-  return (
-    <div className={'wo-pop ' + (off.endsWith('low') ? 'low' : 'high')} role="alert">
-      <span className="wo-pop-arrow" aria-hidden="true">{arrow}</span>
-      <div>
-        <div className="wo-pop-title">{title}</div>
-        <div className="wo-pop-sub">
-          {d.what} {d.v != null ? Math.round(d.v) : '–'} · target {Math.round(d.target)} {d.unit}
-          {d.v != null && <b> ({signed(Math.round(d.v - d.target))} {d.unit})</b>}
-        </div>
-      </div>
-    </div>
   );
 }
 

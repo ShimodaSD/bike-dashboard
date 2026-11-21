@@ -54,8 +54,8 @@ Each of these:
 
 The dashboard is on http://localhost:8000. If another program already uses port 8000 (a Docker
 container, say, which shows `{"detail":"Not Found"}`), the logger takes the next free port and
-prints it: `Dashboard: http://localhost:8001`. Settings saved in the browser (FTP, weight,
-workout) belong to the address, so they start fresh on a new port.
+prints it: `Dashboard: http://localhost:8001`. Settings saved in the browser (FTP, weight)
+belong to the address, so they start fresh on a new port.
 
 A Terminal window shows the log; leave it open. To stop, use **Settings > Stop logger**, close
 the window or press Ctrl+C (a ride in progress is saved either way). If Finder says a
@@ -89,7 +89,7 @@ FTMS, the same standard control Zwift uses. It is off every time the logger star
 - **Workouts**: a `.zwo` step can carry `Grade="6"` (or `OnGrade` / `OffGrade` on `IntervalsT`);
   with control on, each step sets the grade when it starts. In ERG mode the step's power target
   is sent instead. Try `workouts/climb-repeats.zwo`.
-- **Climb feel** (in the Trainer control band on Live, with − / +): *Trainer difficulty* sends a share of the grade to the trainer,
+- **Climb feel** (in the Trainer control band on Live once control is on, with − / +): *Trainer difficulty* sends a share of the grade to the trainer,
   like Zwift's setting (100 % = the real grade, 50 % = a 10 % climb feels like 5 %). Under
   *Rolling and wind resistance* you can change the rolling resistance (0.004, road tyres) and the wind resistance
   (0.51 kg/m, what Zwift and most FTMS apps send) that go with every grade. Changes apply at once,
@@ -230,8 +230,12 @@ more than 2 km/h off, the band turns
 yellow right away. If it stays off for more than 7 s without a break it beeps: two rising
 beeps for too low, one falling beep for too high. Getting back on target resets those 7 s. It
 beeps at most once every 15 s, and not in the first 8 s of a step. Turn the beep off or test it
-under **Settings > Workout**. The logger does not control the trainer (no ERG mode). The
-workout is remembered in the browser, and its targets are drawn on the charts.
+under **Settings > Workout**. The Power tile shows how far you are off the target in big
+numbers (`↓ +23 W ease off`), and any tile whose target is missed gets an amber frame. With a
+power target the Power number is at least a 3 s average, the same number the band and the beep
+use. The logger keeps the loaded workout (`config/workout.json`), so a phone on the same Wi-Fi
+follows the same steps as the laptop and it is still there after a restart. Its targets are
+drawn on the power chart in the colour of their zone.
 
 Heart-rate targets are an extra `.zwo` attribute (Zwift ignores it): `HeartRate="140"` on a
 step, or `OnHeartRate` / `OffHeartRate` on `IntervalsT`; speed the same way with `Speed="30"`

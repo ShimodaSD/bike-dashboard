@@ -326,7 +326,6 @@ td .now { font-size: 11px; font-weight: 600; color: var(--rec-text); margin-left
               padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
               background: var(--page); border-top: 1px solid var(--border); }
   .wrap { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
-  .wo-pop { bottom: calc(84px + env(safe-area-inset-bottom)); }
   /* Lap (or Start) wide on the left, Finish small on the far right,
      so a hurried thumb on Lap never lands on Finish */
   .controls > button.lap, .controls > button.start { flex: 1; }
@@ -374,18 +373,6 @@ td .now { font-size: 11px; font-weight: 600; color: var(--rec-text); margin-left
 .settings .check label { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-weight: 500; color: var(--text-secondary); }
 .settings .check input { width: auto; }
 .settings .inline + .inline { margin-top: 8px; }
-/* off-target popup: bottom centre, over the charts, never over the big numbers; clicks pass through */
-.wo-pop { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 50;
-          display: flex; align-items: center; gap: 18px; pointer-events: none;
-          width: min(560px, calc(100vw - 32px)); padding: 18px 24px; border-radius: 16px;
-          background: var(--surface-2); border: 2px solid var(--warning); box-shadow: 0 10px 40px rgba(0,0,0,.55); }
-.wo-pop.high { border-color: var(--hr); }
-.wo-pop-arrow { font-size: 64px; line-height: 1; font-weight: 700; color: var(--warning); }
-.wo-pop.high .wo-pop-arrow { color: var(--hr); }
-.wo-pop-title { font-size: clamp(30px, 4vw, 44px); font-weight: 700; color: var(--text-primary); line-height: 1.05; }
-.wo-pop-sub { font-size: 18px; color: var(--text-secondary); margin-top: 6px; font-variant-numeric: tabular-nums; }
-.wo-pop-sub b { color: var(--text-primary); }
-
 /* ---------------- trainer control: climb (grade) or ERG (power) */
 .climb { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
          padding: 8px 14px; margin-bottom: 12px; }
@@ -618,4 +605,146 @@ header .controls button.pause.on { border-color: var(--warning); color: var(--wa
 @media (max-width: 560px) {
   .feel-diff { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "label step" "quick quick" "help help"; }
   .feel-quick { flex: 1; min-width: 0; }
+}
+
+/* ---------------- Live, glanceable from the bike: the first screen is for the numbers */
+/* While recording the strip is only read out by screen readers: the red top line, the Live tab's
+   dot and the REC badge in Ride time already say it. Preview, paused and finished keep it. */
+.strip.rec:not(.paused) { position: absolute; width: 1px; height: 1px; min-height: 0; padding: 0; margin: 0;
+                          overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+/* Ride time: the REC badge is enough, a red frame is an alarm colour for a normal state */
+.hero .time.recording { border-color: var(--border); box-shadow: none; }
+.lapnow.flash .lapflash { color: var(--done-text); }
+/* a missed target: amber frame on that tile */
+.hero .tile.off { border-color: var(--warning); box-shadow: inset 0 0 0 1px var(--warning); }
+.hero .power.zoned.off { border-color: var(--warning); }
+/* power against the target, under the big number */
+.delta { display: flex; align-items: baseline; gap: 4px 10px; flex-wrap: wrap; margin-top: 6px;
+         font-size: 18px; color: var(--text-secondary); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.delta b { font-size: clamp(34px, 3.6vw, 52px); font-weight: 750; letter-spacing: -.01em; color: var(--text-primary); }
+.delta span { font-size: clamp(30px, 3vw, 44px); font-weight: 700; }
+.delta.low, .delta.high, .delta.low b, .delta.high b { color: var(--warning); }
+.delta.low small, .delta.high small { color: var(--text-primary); font-size: 18px; font-weight: 600; }
+.delta.ok { color: var(--done-text); font-size: 22px; font-weight: 700; }
+.delta.ok small { color: var(--text-secondary); font-weight: 500; font-size: 16px; }
+.delta.wait b { font-size: 22px; }
+/* the workout band: target and time left in the step are the numbers to read mid-interval */
+.wo-now { align-items: baseline; }
+.wo-target { font-size: clamp(32px, 3.4vw, 48px); line-height: 1; }
+.wo-left { font-size: clamp(32px, 3.4vw, 48px); font-weight: 700; line-height: 1; }
+.wo-state { font-size: 17px; }
+@media (max-width: 560px) {
+  /* phone: Power first, then the workout step, then the other live numbers; setup below them.
+     .hero's tiles join the page grid (display: contents) so the band can sit between them. */
+  .live { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 8px; }
+  .live > * { grid-column: 1 / -1; }
+  .live > .hero { display: contents; }
+  .live > .hero > .tile { grid-column: auto; grid-area: auto; margin-bottom: 8px; order: 3; }
+  .live > .hero > .power { grid-column: 1 / -1; order: 1; }
+  .live > .workout { order: 2; }
+  .live > .stats { order: 4; }
+  .live > .climb { order: 5; }
+  .live > .main { order: 6; }
+  .wo-target, .wo-left { font-size: 34px; }
+  .wo-next { margin-left: 0; }
+  .delta b { font-size: 36px; }
+}
+
+/* ================= look: an atmospheric dark backdrop, glass cards, pill controls, a lime accent.
+   Flat translucent fills, no backdrop blur: it costs GPU (and battery) on every live update. */
+:root {
+  --page: #111513;
+  --glass: rgba(22, 26, 25, .62);           /* cards over the backdrop */
+  --glass-2: rgba(255, 255, 255, .07);      /* wells, inactive controls */
+  --glass-3: rgba(255, 255, 255, .13);      /* active pill, hover */
+  --solid: #1a1e1d;                         /* opaque, for things that float (dock, tooltip) */
+  --rim: rgba(255, 255, 255, .13);
+  --card-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 30px 60px -32px rgba(0, 0, 0, .75);
+  --r-card: 22px;
+  --accent: #cdf06a;                        /* primary actions: Start, Lap */
+  --on-accent: #13171a;
+  --border: rgba(255, 255, 255, .1);
+  --grid: rgba(255, 255, 255, .08);
+  --surface-2: rgba(255, 255, 255, .07);
+  font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+body { background: var(--page); }
+/* the backdrop: soft colour washes, fixed behind the page (one layer, painted once) */
+body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(60vw 45vh at 12% 0%, rgba(90, 120, 160, .30), transparent 70%),
+    radial-gradient(55vw 50vh at 95% 18%, rgba(150, 170, 90, .18), transparent 70%),
+    radial-gradient(70vw 60vh at 40% 100%, rgba(150, 95, 70, .16), transparent 70%),
+    linear-gradient(180deg, #161b1a 0%, var(--page) 60%); }
+
+/* cards */
+.tile, .charts, .panel, .workout, .climb, .strip, .settings, .devices, .banner, .offline {
+  background: var(--glass); border: 1px solid var(--rim); border-radius: var(--r-card); box-shadow: var(--card-shadow); }
+.tile { padding: 16px 18px; }
+.charts, .panel { padding: 16px 18px; }
+.workout, .climb { padding: 12px 18px; }
+.climb.on { padding-bottom: 14px; }
+.strip { border-radius: 999px; padding: 8px 10px 8px 16px; min-height: 52px; }
+.strip.done, .strip.rec.paused { border-radius: var(--r-card); }
+.strip.rec { background: color-mix(in oklab, var(--critical) 22%, var(--glass)); }
+.strip.done { background: color-mix(in oklab, var(--good) 16%, var(--glass)); border-color: var(--rim); }
+.tile .label, .charts .head h2, .side h2, .chart .title { font-weight: 600; color: var(--text-secondary); }
+.tile .label { font-size: 12.5px; }
+.charts .head h2, .side h2 { font-size: 15px; color: var(--text-primary); }
+.tile .value { font-weight: 600; letter-spacing: -.025em; }
+/* live tiles tinted by their series, lightly; Ride time stays neutral, Power takes its zone */
+.hero > .tile:nth-child(3) { background: color-mix(in oklab, var(--cadence) 13%, var(--glass)); }
+.hero > .tile:nth-child(4) { background: color-mix(in oklab, var(--speed) 13%, var(--glass)); }
+.hero > .tile:nth-child(5) { background: color-mix(in oklab, var(--hr) 13%, var(--glass)); }
+.hero .power.zoned { background: color-mix(in oklab, var(--zc) 28%, var(--glass)); border-color: color-mix(in oklab, var(--zc) 55%, transparent); }
+.hero .power.zoned .zonebar span.on { box-shadow: 0 0 0 2px transparent, 0 0 0 3px var(--text-primary); }
+.hero .tile.off, .hero .power.zoned.off { border-color: var(--warning); box-shadow: var(--card-shadow), inset 0 0 0 1px var(--warning); }
+.zonebar { gap: 4px; }
+.zonebar span { border-radius: 999px; }
+.zonebar span.on { box-shadow: 0 0 0 3px var(--text-primary); }
+.lapnow { border-top-color: var(--rim); }
+.workout.off { border-color: var(--warning); box-shadow: var(--card-shadow), inset 0 0 0 1px var(--warning); }
+.wo-profile polygon { fill: var(--glass-3); stroke: none; }
+.wo-profile polygon.free { fill: var(--glass-2); }
+.wo-profile polygon.cur { fill: var(--accent); }
+.wo-profile { border-radius: 8px; }
+.tiz .r .bar { height: 8px; border-radius: 999px; background: var(--glass-2); }
+.tiz .r .bar i { border-radius: 999px; }
+.laps th { color: var(--text-muted); font-weight: 600; }
+.tip { background: var(--solid); border: 1px solid var(--rim); border-radius: 14px; box-shadow: 0 20px 40px -12px rgba(0,0,0,.7); }
+
+/* controls: pills */
+button, select, input, a.btn, label.btn { border-radius: 999px; background: var(--glass-2); border-color: var(--rim); }
+input { border-radius: 12px; }
+button:hover, a.btn:hover, label.btn:hover, select:hover { background: var(--glass-3); border-color: var(--rim); }
+button.primary, a.btn.primary, button.start, .seg button.on, .dial-quick button.on, .feel-quick.on {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 650; }
+button.primary:hover, a.btn.primary:hover, button.start:hover { background: #d9f58a; border-color: #d9f58a; }
+button.danger { background: var(--critical); border-color: var(--critical); color: #fff; }
+button.quiet { background: transparent; border-color: transparent; }
+button.quiet:hover { background: var(--glass-2); }
+button.primary kbd, button.start kbd { background: rgba(19, 23, 26, .12); border-color: rgba(19, 23, 26, .25); color: var(--on-accent); }
+.seg { padding: 3px; gap: 2px; border-radius: 999px; background: var(--glass-2); border: 1px solid var(--rim); }
+.seg button, .seg button:first-child, .seg button:last-child { border-radius: 999px; border: 0; background: transparent; min-height: calc(var(--tap) - 8px); }
+.switch.on .knob { background: var(--accent); }
+.switch.on .knob::after { background: var(--on-accent); }
+.pill { background: var(--glass); border-color: var(--rim); }
+
+/* page tabs: a glass pill with the current page as a lighter pill */
+.nav ul { box-shadow: none; display: inline-flex; max-width: 100%; padding: 4px; gap: 2px; border-radius: 999px;
+          background: var(--glass); border: 1px solid var(--rim); box-sizing: border-box; }
+.nav a { border-radius: 999px; border-bottom: 0; min-height: calc(var(--tap) - 4px); padding: 0 16px; }
+@media (hover: hover) { .nav a:hover { background: var(--glass-2); } }
+.nav a[aria-current=page] { background: var(--glass-3); color: var(--text-primary); box-shadow: inset 0 1px 0 rgba(255,255,255,.08); }
+
+@media (max-width: 560px) {
+  .tile { padding: 12px 14px; border-radius: 18px; }
+  .strip { border-radius: 18px; }
+  .nav ul { display: flex; }
+  .nav a { padding: 0 9px; font-size: 13px; }
+  /* ride buttons in a floating dock */
+  .controls { left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); padding: 8px;
+              background: var(--solid); border: 1px solid var(--rim); border-radius: 999px;
+              box-shadow: 0 20px 40px -10px rgba(0, 0, 0, .8); }
+  .wrap { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
 }

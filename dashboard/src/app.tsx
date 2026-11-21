@@ -445,13 +445,28 @@ function TargetChip({ t, digits = 0, extra }: { t?: TileTarget; digits?: number;
     </span>);
 }
 
+// A tile whose workout target is missed gets an amber frame, readable from the bike.
+const offCls = (t?: TileTarget) => (t && (t.state === 'low' || t.state === 'high') ? ' off' : '');
+
+// Power against the workout's target, big under the number: how far off and which way.
+// It replaces the old "Ease off" pop-up, which covered the other tiles.
+function PowerDelta({ t, p }: { t: TileTarget; p: number | null }) {
+  if (p == null || t.state === 'wait') return <div className="delta wait">Get to <b>{Math.round(t.v)} W</b></div>;
+  const d = Math.round(p - t.v);
+  if (t.state === 'ok') return <div className="delta ok">On target<small> {d > 0 ? '+' : ''}{d} W</small></div>;
+  const high = t.state === 'high';
+  return <div className={'delta ' + t.state}><span aria-hidden="true">{high ? '↓' : '↑'} </span>
+    <b>{d > 0 ? '+' : '−'}{Math.abs(d)} W</b><small> {high ? 'ease off' : 'push harder'}</small></div>;
+}
+
 // Recording: live ride.  Ready: live preview (nothing saved).  Finished: the ride's summary.
 // Paused: still recording, but the numbers are the live preview and the timer waits.
 interface HeroProps {
   hist: Sample[]; laps: number[]; st: RideStats; ftp: number; preview: LiveValues | null; mode: Mode;
   now: LiveNow | null; recent: RecentPower[]; smooth: number; paused: boolean; targets: TileTargets;
+  lapFlash?: number;                                // a lap just started: "Lap N started" in the Ride time tile
 }
-function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth, paused, targets }: HeroProps) {
+function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth, paused, targets, lapFlash = 0 }: HeroProps) {
   const done = mode === 'finished' && hist.length > 0;
   const fresh = now && Date.now() - now.at < FRESH_MS;
   const live: LiveValues[] = fresh ? [now] : mode === 'recording' && !paused ? hist : preview ? [preview] : [];
@@ -469,10 +484,11 @@ function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth, paused,
                   : null;   // the strip above already says Preview
   return (
     <section className={'hero ' + mode}>
-      <Tile className={'power' + (zi >= 0 ? ' zoned' : '')} style={zi >= 0 ? ({ '--zc': `var(--z${zi + 1})` } as CSSProperties) : undefined} label={done ? 'Avg power · ride' : smooth ? `Power · ${smooth} s` : 'Power'} keyColor="--power" value={r0(p)} unit="W"
+      <Tile className={'power' + (zi >= 0 ? ' zoned' : '') + offCls(targets.power_w)} style={zi >= 0 ? ({ '--zc': `var(--z${zi + 1})` } as CSSProperties) : undefined} label={done ? 'Avg power · ride' : smooth ? `Power · ${smooth} s` : 'Power'} keyColor="--power" value={r0(p)} unit="W"
             target={<TargetChip t={targets.power_w} extra={targets.grade != null ? `${targets.grade} % grade` : undefined} />}
             sub={done ? <>{zoneTxt}{last ? <span className="live-now">now {r0(avg3(live))} W</span> : null}</>
                       : !last ? '' : p != null && p > 0 ? zoneTxt : 'Not pedaling'}>
+        {!done && targets.power_w && <PowerDelta t={targets.power_w} p={p} />}
         <div className="zonebar" aria-hidden="true">
           {ZONES.map((zz, i) => <span key={zz.n} className={i === zi ? 'on' : ''} style={{ background: `var(--z${i + 1})` }} />)}
         </div>
@@ -480,17 +496,17 @@ function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth, paused,
       <Tile className={'time ' + mode + (paused ? ' paused' : '')} label="Ride time" badge={timeBadge}
             value={mode === 'ready' ? '0:00' : fmtT(hist.length)}
             sub={mode === 'ready' ? 'Press Start to record' : paused ? 'Timer stopped · press Resume' : `moving ${fmtT(st.moving)}`}>
-        {mode === 'recording' && <div className="lapnow" aria-label="Current lap">
-          <b>Lap {laps.length}</b><span>{fmtT(lapRows.length)}</span><span>{r0(lapAvg)} W avg</span></div>}
+        {mode === 'recording' && <div className={'lapnow' + (lapFlash ? ' flash' : '')} aria-label="Current lap">
+          {lapFlash ? <b className="lapflash">Lap {lapFlash} started</b> : <b>Lap {laps.length}</b>}<span>{fmtT(lapRows.length)}</span><span>{r0(lapAvg)} W avg</span></div>}
       </Tile>
-      <Tile label={done ? 'Avg cadence' : 'Cadence'} keyColor="--cadence" unit="rpm" target={<TargetChip t={targets.cadence_rpm} />}
+      <Tile className={offCls(targets.cadence_rpm)} label={done ? 'Avg cadence' : 'Cadence'} keyColor="--cadence" unit="rpm" target={<TargetChip t={targets.cadence_rpm} />}
             value={done ? r0(st.avgCad) : last ? r0(last.cadence_rpm) : '–'}
             sub={!done && mode === 'recording' && st.avgCad ? `avg ${Math.round(st.avgCad)}` : ''} />
-      <Tile label={done ? 'Avg speed' : 'Speed'} keyColor="--speed" unit="km/h" target={<TargetChip t={targets.speed_kmh} digits={1} />}
+      <Tile className={offCls(targets.speed_kmh)} label={done ? 'Avg speed' : 'Speed'} keyColor="--speed" unit="km/h" target={<TargetChip t={targets.speed_kmh} digits={1} />}
             value={done ? (st.avgSpd ? st.avgSpd.toFixed(1) : '–') : last && nz(last.speed_kmh) ? last.speed_kmh.toFixed(1) : '–'}
             sub={mode === 'recording' && st.avgSpd ? `avg ${st.avgSpd.toFixed(1)}`
                  : last && !nz(last.speed_kmh) && !done ? 'Trainer sends no speed' : ''} />
-      <Tile label={done ? 'Avg heart rate' : 'Heart rate'} keyColor="--hr" unit="bpm" target={<TargetChip t={targets.heart_rate_bpm} />}
+      <Tile className={offCls(targets.heart_rate_bpm)} label={done ? 'Avg heart rate' : 'Heart rate'} keyColor="--hr" unit="bpm" target={<TargetChip t={targets.heart_rate_bpm} />}
             value={done ? r0(st.avgHr) : last ? r0(last.heart_rate_bpm) : '–'}
             sub={done ? (st.maxHr ? `max ${st.maxHr}` : 'No HR data')
                  : !last ? '' : mode === 'recording' && st.avgHr ? `avg ${Math.round(st.avgHr)} · max ${st.maxHr}`
@@ -583,7 +599,9 @@ function SendTo({ ride, href, label, className = '', used, onDownload }: SendToP
             onClick={() => { onDownload(); if (href) window.open(href, '_blank', 'noopener'); }}>{used && <Check />}{label}</a>;
 }
 
-// ------------------------------------------------------------------ ride strip: one band, same height in every state
+// ------------------------------------------------------------------ ride strip: one band for preview, paused and finished.
+// While recording it is only read out by screen readers: the red line on top, the Live tab's dot and
+// the REC badge in Ride time already say it, and the first screen is kept for the numbers.
 interface RideStripProps {
   ride: Partial<RideStatus>; seconds: number; startArmed: boolean; lapFlash: number; sent: Sent;
   onDownload: (...to: string[]) => void;
@@ -659,7 +677,14 @@ export function App() {
   const rideKg = mode !== 'ready' && ride.kg != null ? ride.kg : kg;   // a finished ride keeps its own
   const [win, setWin] = useStored('win', 1200);
   const [more, setMore] = useStored('moreStats', false);
-  const [wo, setWo] = useStored<Workout | null>('workout', null);
+  // The workout is kept by the logger (logger/workout_store.py), so a phone follows the same steps
+  // as the laptop. This browser's copy is only used with an older logger that doesn't keep one.
+  const [localWo, setLocalWo] = useStored<Workout | null>('workout', null);
+  const wo = status.workout !== undefined ? status.workout : localWo;
+  const setWo = (w: Workout | null) => {
+    setLocalWo(w);
+    fetch('/workout', { method: 'POST', body: w ? JSON.stringify(w) : '' }).catch(() => {});
+  };
   const [woSound, setWoSound] = useStored('workoutSound', true);
   const [sent, setSent] = useStored<Sent | null>('sent', NOT_SENT);   // which buttons were used for which .fit
 
@@ -748,10 +773,13 @@ export function App() {
     return () => document.removeEventListener('keydown', onKey);
   }, [onKey]);
 
-  // live numbers for the workout band and the tiles' targets: the latest packet while fresh, else the last second
+  // live numbers for the workout band and the tiles' targets: the latest packet while fresh, else the last second.
+  // With a power target the Power tile, the band and the target all use one number: at least a 3 s average
+  // (an instant reading jumps around the target with every pedal stroke).
+  const powerSmooth = woAt?.target != null && !paused ? Math.max(3, smooth) : smooth;
   const fresh = now && Date.now() - now.at < FRESH_MS, last = hist.length ? hist[hist.length - 1] : null;
   const reading = {
-    power: fresh ? livePower(now, recent, 3) : last ? avg3(hist) : null,
+    power: fresh ? livePower(now, recent, Math.max(3, powerSmooth)) : last ? avg3(hist) : null,
     cadence: fresh ? now.cadence_rpm : last ? last.cadence_rpm : null,
     hr: fresh ? now.heart_rate_bpm : last ? last.heart_rate_bpm : null,
     speed: fresh ? now.speed_kmh : last ? last.speed_kmh : null,
@@ -774,7 +802,7 @@ export function App() {
       : page === 'settings' ? <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} sex={sex} setSex={setSex} smooth={smooth} setSmooth={setSmooth}
                                         liveRate={liveRate} setLiveRate={setLiveRate} onCsv={() => exportCsv(hist)} canCsv={hist.length > 0}
                                         recording={mode === 'recording'} />
-      : <>
+      : <div className="live">
       <RideStrip ride={ride} seconds={hist.length} startArmed={startArmed} lapFlash={lapFlash}
                  sent={sent || NOT_SENT} onDownload={markSent} ftpTest={testing}
                  onFtpTest={ftpStatus && online ? startTest : undefined} />
@@ -786,7 +814,7 @@ export function App() {
                                                                    coach={online ? status.coach : undefined} laps={laps} source="live"
                                                                    kg={rideKg} kgFrom={ride.kg != null ? 'ride' : 'settings'} sex={sex} />}
       <Hero hist={hist} laps={laps} st={st} ftp={ftp} preview={mode === 'recording' && !paused ? null : preview} mode={mode}
-            now={now} recent={recent} smooth={smooth} paused={paused} targets={targets} />
+            now={now} recent={recent} smooth={powerSmooth} paused={paused} targets={targets} lapFlash={lapFlash} />
       <Stats hist={hist} st={st} ftp={ftp} kg={rideKg} more={more} setMore={setMore} mode={mode} />
       <section className="main">
         <Charts hist={hist} laps={laps} ftp={ftp} win={win} setWin={setWin} version={version}
@@ -796,7 +824,7 @@ export function App() {
           <Laps hist={hist} laps={laps} ftp={ftp} recording={mode === 'recording'} version={version} />
         </div>
       </section>
-      </>}
+      </div>}
     </div>
   );
 }

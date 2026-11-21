@@ -3,7 +3,7 @@
 // line and the planned workout go under the series, the "waiting" message over it.
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
-import { fmtT, cssVar } from '../util/ride';
+import { fmtT, cssVar, zoneOf, ZONES } from '../util/ride';
 import type { Sample, SeriesKey } from '../types/feed';
 import type { PlanPoint } from '../types/workout';
 
@@ -21,6 +21,7 @@ export interface ChartDef {
   unit: string;
   h: number;                                          // px
   xaxis?: boolean;                                    // time labels under this chart
+  ticks?: number;                                     // y-axis labels to aim for (default 4)
 }
 
 // What React hands the chart; the draw hooks read it when uPlot paints.
@@ -46,7 +47,7 @@ export interface PlotHandlers {
   reset(): void;
 }
 
-interface Tokens { grid: string; muted: string; sec: string; surf: string; col: string }
+interface Tokens { grid: string; muted: string; sec: string; surf: string; col: string; zones: string[] }
 
 const FONT = '12px system-ui, sans-serif';
 const MIN_SPAN = 30;                                  // seconds: the closest zoom
@@ -107,9 +108,13 @@ function drawUnder(u: uPlot, meta: PlotMeta, tok: Tokens) {
     g.beginPath();
     g.moveTo(X(ta), Y(va + tol(va))); g.lineTo(X(tb), Y(vb + tol(vb)));
     g.lineTo(X(tb), Y(Math.max(ymin, vb - tol(vb)))); g.lineTo(X(ta), Y(Math.max(ymin, va - tol(va)))); g.closePath();
-    g.fillStyle = tok.sec + '1f'; g.fill();
+    // power targets in the colour of their zone (the step's middle), so the plan reads like the zone bar
+    const col = c.ftpRef ? tok.zones[zoneOf((p.a + p.b) / 2, meta.ftp)] || tok.sec : tok.sec;
+    g.fillStyle = col + (c.ftpRef ? '38' : '1f'); g.fill();
     g.beginPath(); g.moveTo(X(ta), Y(va)); g.lineTo(X(tb), Y(vb));
-    g.strokeStyle = tok.sec; g.lineWidth = 1.5 * pr; g.stroke(); g.lineWidth = pr;
+    // dashed, so a target in the power line's own zone (Z2 blue) still reads as the plan
+    g.strokeStyle = col; g.lineWidth = 2 * pr; if (c.ftpRef) g.setLineDash([7 * pr, 4 * pr]);
+    g.stroke(); g.setLineDash([]); g.lineWidth = pr;
   }
   g.restore();
 }
@@ -178,7 +183,7 @@ function bindGestures(u: uPlot, meta: PlotMeta, on: PlotHandlers) {
 // `on`: { hover(t, over, left, top) | hover(null), zoom(lo, hi), reset() }
 export function createPlot(node: HTMLDivElement, c: ChartDef, meta: PlotMeta, on: PlotHandlers): uPlot {
   const tok: Tokens = { grid: cssVar('--grid'), muted: cssVar('--text-muted'), sec: cssVar('--text-secondary'),
-                surf: cssVar('--surface-1'), col: cssVar(c.color) };
+                surf: cssVar('--surface-1'), col: cssVar(c.color), zones: ZONES.map((_, i) => cssVar(`--z${i + 1}`)) };
   const opts: uPlot.Options = {
     width: node.clientWidth || 300, height: c.h,
     padding: [8, 10, c.xaxis ? 0 : 6, 0],
