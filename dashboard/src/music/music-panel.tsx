@@ -4,7 +4,8 @@
 // YouTube loads until the panel is first opened, so the dashboard still starts offline.
 import { useState, type FormEvent } from 'react';
 import { useStored } from '../hooks/stored';
-import { SERVICE_NAME, addPick, embedUrl, kindWord, openUrl, parseMusicLink, type MusicPick } from './music';
+import { SERVICE_NAME, addPick, embedUrl, kindWord, openSmallWindow, openUrl, parseMusicLink, type MusicPick } from './music';
+import { clearYouTubeError, listenTo, useYouTubeError, youTubeErrorText } from './youtube';
 
 const Note = () => (
   <svg className="note" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -31,6 +32,7 @@ export function MusicPanel({ open, onClose }: { open: boolean; onClose: () => vo
   const [picks, setPicks] = useStored<MusicPick[]>('musicPicks', []);
   const [nowKey, setNowKey] = useStored<string | null>('musicNow', null);
   const now = picks.find(p => p.key === nowKey) ?? null;
+  const ytError = useYouTubeError(now?.service === 'youtube' ? now.key : null);
   // The panel (and its player) is only put on the page once opened, then kept: closing hides it.
   const [loaded, setLoaded] = useState(open);
   if (open && !loaded) setLoaded(true);
@@ -57,17 +59,29 @@ export function MusicPanel({ open, onClose }: { open: boolean; onClose: () => vo
            onKeyDown={e => { if (e.key === 'Escape') onClose(); }}>
       <div className="music-head">
         <h2 id="music-h"><Note />Music</h2>
-        {now && <a className="music-open" href={openUrl(now)} target="_blank" rel="noopener noreferrer">
-          Open in {SERVICE_NAME[now.service]}</a>}
+        {now && <button className="quiet music-open" onClick={() => openSmallWindow(now)}
+                        title={`Open ${SERVICE_NAME[now.service]} in a small window: everything plays there, with your sign-in`}>
+          Small window</button>}
         <button className="quiet music-close" onClick={onClose} aria-label="Close music">
           <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
         </button>
       </div>
 
-      {now ? (
+      {now && ytError != null ? (
+        <div className="music-blocked" role="alert">
+          <p>{youTubeErrorText(ytError)}</p>
+          <p className="help">A small window of YouTube Music plays it with your sign-in and keeps playing while you ride.</p>
+          <div className="acts">
+            <button className="primary" onClick={() => openSmallWindow(now)}>Play in a small window</button>
+            <a className="btn" href={openUrl(now)} target="_blank" rel="noopener noreferrer">Open in YouTube Music</a>
+            <button className="quiet" onClick={() => clearYouTubeError(now.key)}>Try again</button>
+          </div>
+        </div>
+      ) : now ? (
         <iframe key={now.key} className={'music-player ' + now.service} title={`${now.name} (${SERVICE_NAME[now.service]} player)`}
                 src={embedUrl(now)} height={playerHeight(now)} referrerPolicy="strict-origin-when-cross-origin"
-                allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" />
+                allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                onLoad={now.service === 'youtube' ? e => listenTo(e.currentTarget, now.key) : undefined} />
       ) : (
         <p className="music-empty">{picks.length ? 'Pick something to play.'
           : <>Paste a playlist, album or song from Spotify or YouTube Music. In the app: <b>Share › Copy link</b>.</>}</p>

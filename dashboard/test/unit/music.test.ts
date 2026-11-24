@@ -44,7 +44,12 @@ describe('YouTube Music links', () => {
   it('plays a single song from music.youtube.com, youtube.com or youtu.be', () => {
     expect(pick('https://music.youtube.com/watch?v=dQw4w9WgXcQ&si=x')).toMatchObject({ kind: 'song', ref: 'dQw4w9WgXcQ' });
     expect(pick('https://youtu.be/dQw4w9WgXcQ?si=x')).toMatchObject({ kind: 'song', ref: 'dQw4w9WgXcQ' });
-    expect(embedUrl(pick('https://www.youtube.com/watch?v=dQw4w9WgXcQ'))).toBe('https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1&playsinline=1&rel=0');
+    expect(embedUrl(pick('https://www.youtube.com/watch?v=dQw4w9WgXcQ'))).toBe(
+      `https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1&playsinline=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`);
+  });
+  it('reads the share link with its tracking parameters', () => {
+    const p = pick('https://music.youtube.com/playlist?list=PLyrLTfUQELB72xgoCCBGNEyD6G4bIDcbJ&si=dNi0DQDCGWUZz0hn&drli=1');
+    expect(embedUrl(p)).toMatch(/^https:\/\/www\.youtube\.com\/embed\/videoseries\?list=PLyrLTfUQELB72xgoCCBGNEyD6G4bIDcbJ&/);
   });
   it('skips personal mixes (they do not play embedded) but keeps the song', () => {
     expect(pick('https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=RDAMVMdQw4w9WgXcQ')).toMatchObject({ kind: 'song' });

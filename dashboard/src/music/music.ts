@@ -75,7 +75,9 @@ export function parseMusicLink(text: string, name = ''): ParseResult {
 export function embedUrl(p: MusicPick): string {
   if (p.service === 'spotify') return `https://open.spotify.com/embed/${p.kind}/${p.ref}?theme=0`;
   // youtube.com (not -nocookie) so a YouTube Premium sign-in in this browser counts: no ads
-  const q = 'autoplay=1&playsinline=1&rel=0';
+  // enablejsapi + origin: the player reports errors back to this page (music/youtube.ts)
+  const origin = typeof window !== 'undefined' ? `&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}` : '';
+  const q = `autoplay=1&playsinline=1&rel=0${origin}`;
   return p.kind === 'playlist'
     ? `https://www.youtube.com/embed/${p.video ?? 'videoseries'}?list=${p.ref}&${q}`
     : `https://www.youtube.com/embed/${p.ref}?${q}`;
@@ -85,6 +87,11 @@ export function embedUrl(p: MusicPick): string {
 export function openUrl(p: MusicPick): string {
   if (p.service === 'spotify') return `https://open.spotify.com/${p.kind}/${p.ref}`;
   return p.kind === 'playlist' ? `https://music.youtube.com/playlist?list=${p.ref}` : `https://music.youtube.com/watch?v=${p.ref}`;
+}
+
+/** Play in a small window of the service's own site: everything plays there, with your sign-in. */
+export function openSmallWindow(p: MusicPick) {
+  window.open(openUrl(p), 'x2max-music', 'popup,width=440,height=760');
 }
 
 /** The pick list after adding one: newest first, a link already there moves to the top, at most `max`. */

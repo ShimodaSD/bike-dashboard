@@ -795,3 +795,8 @@ button.primary kbd, button.start kbd { background: rgba(19, 23, 26, .12); border
   .music { left: 10px; right: 10px; width: auto; bottom: calc(80px + env(safe-area-inset-bottom));
            max-height: calc(100vh - 100px - env(safe-area-inset-bottom)); }
 }
+.music-blocked { padding: 14px; border-radius: 14px; background: var(--glass-2); border: 1px solid var(--warning); font-size: 14px; }
+.music-blocked p { margin: 0; }
+.music-blocked .help { margin-top: 6px; }
+.music-blocked .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+button.music-open { min-height: 32px; padding: 0 10px; font-size: 13px; color: var(--text-secondary); }

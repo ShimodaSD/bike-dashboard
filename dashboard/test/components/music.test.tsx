@@ -1,10 +1,11 @@
 // Music panel: add a link, it plays in the service's player, pick another, remove, and the player
 // stays on the page (hidden) when the panel is closed so the music keeps going.
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import { beforeEach, expect, it } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
 import { MusicButton, MusicPanel } from '../../src/music/music-panel';
+import { MAX_SKIPS } from '../../src/music/youtube';
 
 function Harness() {
   const [open, setOpen] = useState(false);
@@ -35,7 +36,9 @@ it('adds links, plays the newest, switches and removes', async () => {
   await user.type(screen.getByLabelText('Name (optional)'), 'Climb mix');
   await user.click(screen.getByRole('button', { name: 'Add' }));
   expect(player()).toHaveAttribute('src', expect.stringContaining('open.spotify.com/embed/playlist/'));
-  expect(screen.getByRole('link', { name: 'Open in Spotify' })).toHaveAttribute('href', 'https://open.spotify.com/playlist/37i9dQZF1DX76Wlfdnj7AP');
+  const win = vi.spyOn(window, 'open').mockReturnValue(null);
+  await user.click(screen.getByRole('button', { name: 'Small window' }));
+  expect(win).toHaveBeenCalledWith('https://open.spotify.com/playlist/37i9dQZF1DX76Wlfdnj7AP', 'x2max-music', expect.stringContaining('popup'));
 
   await user.type(screen.getByLabelText('Spotify or YouTube Music link'), YT + '{Enter}');
   expect(player()).toHaveAttribute('src', expect.stringContaining('youtube.com/embed/videoseries?list=PLx0'));
@@ -67,4 +70,41 @@ it('keeps the player when closed (Escape), so the music goes on', async () => {
   await user.keyboard('{Escape}');
   expect(document.getElementById('music')).not.toHaveClass('open');
   expect(player()).not.toBeNull();
+});
+
+// The YouTube player posts its events to the page (enablejsapi); see music/youtube.ts.
+const ytSays = (id: string, event: string, info: number, source: { postMessage: (m: string, o: string) => void } | null = null) =>
+  act(() => { window.dispatchEvent(new MessageEvent('message', { origin: 'https://www.youtube.com', data: JSON.stringify({ event, id, info }), source: source as unknown as Window })); });
+const YT_SONG = 'https://music.youtube.com/watch?v=dQw4w9WgXcQ';
+
+it('says when YouTube blocks the music outside YouTube and offers a small window', async () => {
+  const user = userEvent.setup();
+  const open = vi.spyOn(window, 'open').mockReturnValue(null);
+  render(<Harness />);
+  await user.click(screen.getByRole('button', { name: /Music/ }));
+  await user.type(screen.getByLabelText('Spotify or YouTube Music link'), YT_SONG + '{Enter}');
+  expect(player()).toHaveAttribute('src', expect.stringContaining('enablejsapi=1'));
+  ytSays('youtube:song:dQw4w9WgXcQ', 'onError', 150);
+  expect(screen.getByRole('alert')).toHaveTextContent('doesn’t allow it to play outside YouTube');
+  expect(player()).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Play in a small window' }));
+  expect(open).toHaveBeenCalledWith('https://music.youtube.com/watch?v=dQw4w9WgXcQ', 'x2max-music', expect.stringContaining('popup'));
+  await user.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(player()).not.toBeNull();
+});
+
+it('skips songs that won’t play in a playlist, and gives up after a few in a row', async () => {
+  const user = userEvent.setup();
+  render(<Harness />);
+  await user.click(screen.getByRole('button', { name: /Music/ }));
+  await user.type(screen.getByLabelText('Spotify or YouTube Music link'), YT + '{Enter}');
+  const id = 'youtube:playlist:PLx0sYbCqOb8TBPRdmBHs5Iftvv9TPboYG';
+  const frame = { postMessage: vi.fn() };
+  ytSays(id, 'onError', 150, frame);
+  expect(JSON.parse(frame.postMessage.mock.calls[0][0])).toMatchObject({ event: 'command', func: 'nextVideo' });
+  ytSays(id, 'onStateChange', 1, frame);                        // the next song plays: the count starts over
+  for (let i = 0; i < MAX_SKIPS; i++) ytSays(id, 'onError', 150, frame);
+  expect(player()).not.toBeNull();
+  ytSays(id, 'onError', 150, frame);
+  expect(screen.getByRole('alert')).toHaveTextContent('outside YouTube');
 });
