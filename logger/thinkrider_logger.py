@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 thinkrider_logger.py - capture ALL Bluetooth LE data from a ThinkRider X2Max
+(or a Tacx Flow Smart, or any FTMS / Cycling Power smart trainer)
 (or any BLE smart trainer) and show a LIVE training dashboard in your browser.
 
 What it does
@@ -52,7 +53,7 @@ and upload to Strava (strava.com/upload/select) or Garmin Connect (Import Data).
 Ctrl+C during a ride also saves it.
 
 IMPORTANT: a trainer usually accepts only ONE Bluetooth connection.
-Close Zwift / ThinkRider app / MyWhoosh etc. (or use them over ANT+).
+Close Zwift / ThinkRider app / Tacx Training app / MyWhoosh etc. (or use them over ANT+).
 """
 
 import argparse
@@ -93,6 +94,10 @@ def u16(x: int) -> str:
     return f"0000{x:04x}-0000-1000-8000-00805f9b34fb"
 
 
+# Tacx trainers (Flow Smart, Neo, Flux ...) also carry ANT+ FE-C pages over a private
+# Bluetooth service, next to the standard FTMS / Cycling Power ones.
+TACX_FEC_SVC = "6e40fec1-b5a3-f393-e0a9-e50e24dcca9e"
+
 NAMES = {
     u16(0x1826): "Fitness Machine Service (FTMS)",
     u16(0x1818): "Cycling Power Service",
@@ -126,6 +131,7 @@ NAMES = {
     u16(0x2A27): "Hardware Revision",
     u16(0x2A28): "Software Revision",
     u16(0x2A00): "Device Name",
+    TACX_FEC_SVC: "Tacx FE-C over BLE",
 }
 
 
@@ -870,8 +876,9 @@ async def scan(timeout: float):
           "Broadcast Heart Rate first (see README).")
 
 
-TRAINER_HINTS = ("think", "x2", "x2max", "x2-max")
-TRAINER_SVCS = {u16(0x1826), u16(0x1818)}       # FTMS, Cycling Power
+TRAINER_HINTS = ("think", "x2", "x2max", "x2-max", "tacx")
+TRAINER_NAMES = ("think", "x2max", "x2 max", "x2-max", "tacx")   # names that are surely a trainer
+TRAINER_SVCS = {u16(0x1826), u16(0x1818), TACX_FEC_SVC}   # FTMS, Cycling Power, Tacx FE-C
 HR_SVC = u16(0x180D)
 HR_HINTS = ("forerunner", "garmin", "fr165", "fr 165")
 
@@ -884,7 +891,7 @@ def device_kind(name, service_uuids) -> str:
     """'trainer', 'hr' or 'other', from what a device advertises (for the device panel)."""
     nm = (name or "").lower()
     svcs = {s.lower() for s in service_uuids}
-    if svcs & TRAINER_SVCS or any(h in nm for h in ("think", "x2max", "x2 max", "x2-max")):
+    if svcs & TRAINER_SVCS or any(h in nm for h in TRAINER_NAMES):
         return "trainer"
     if HR_SVC in svcs or any(h in nm for h in HR_HINTS):
         return "hr"
@@ -892,7 +899,7 @@ def device_kind(name, service_uuids) -> str:
 
 
 async def find_trainer(name_hint, timeout):
-    """No device picked yet: the first ThinkRider / X2 name, else any FTMS trainer."""
+    """No device picked yet: the first ThinkRider / X2 / Tacx name, else any FTMS trainer."""
     hints = [name_hint.lower()] if name_hint else list(TRAINER_HINTS)
     ftms = u16(0x1826)
     found = await BleakScanner.discover(timeout=timeout, return_adv=True)

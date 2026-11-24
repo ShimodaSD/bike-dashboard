@@ -274,7 +274,7 @@ export function Settings({ ftp, setFtp, kg, setKg, sex, setSex, onCsv, canCsv, s
         <h3 id="set-tips">Tips</h3>
         <div className="field wide">
           <p className="help">Garmin watch heart rate: turn on <b>Broadcast Heart Rate</b> on the watch.
-            Close Zwift and the ThinkRider app first: the trainer and the watch accept one connection at a time.
+            Close Zwift and the trainer’s app (ThinkRider, Tacx Training) first: the trainer and the watch accept one connection at a time.
             <span className="keys"> Keys, on any page: <Kbd k="S" /> start, <Kbd k="L" /> lap, <Kbd k="P" /> pause / resume, <Kbd k="F" /> twice to finish,
             <Kbd k="−" /> <Kbd k="+" /> grade (Trainer control on).</span></p>
         </div>
@@ -306,7 +306,7 @@ function StopLogger() {
 // ------------------------------------------------------------------ devices (disclosure): pick trainer + HR source
 const ROLE: Record<DeviceRole, { title: string; any: string; tip: ReactNode }> = {
   trainer: { title: 'Trainer', any: 'Any smart trainer',
-             tip: 'Pedal to wake the trainer. Close Zwift and the ThinkRider app first: it takes one connection at a time.' },
+             tip: 'Pedal to wake the trainer. Close Zwift and the trainer’s app (ThinkRider, Tacx Training) first: it takes one connection at a time.' },
   hr:      { title: 'Heart rate', any: 'Any heart-rate broadcast',
              tip: <>On the Forerunner turn on <b>Broadcast Heart Rate</b> (hold UP › Settings › Sensors &amp; Accessories › Wrist Heart Rate).</> },
 };
@@ -796,7 +796,7 @@ export function App() {
                                  ftpTest={{ ftpStatus, ftp, setFtp, recording: mode === 'recording', startArmed: testArmed, onStart: startTest }} />
       : page === 'rides' ? <PastRides rider={{ ftp, kg, sex }} coach={online ? status.coach : undefined} />
       : page === 'devices' ? <section className="page" aria-labelledby="devices-h">
-          <PageHead id="devices-h" title="Devices">The trainer and a heart-rate source. Close Zwift and the ThinkRider app first: each device takes one connection at a time.</PageHead>
+          <PageHead id="devices-h" title="Devices">The trainer and a heart-rate source. Close Zwift and the trainer’s app (ThinkRider, Tacx Training) first: each device takes one connection at a time.</PageHead>
           <Devices status={status} recording={mode === 'recording'} />
         </section>
       : page === 'settings' ? <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} sex={sex} setSex={setSex} smooth={smooth} setSmooth={setSmooth}

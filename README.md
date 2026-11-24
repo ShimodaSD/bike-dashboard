@@ -78,6 +78,12 @@ panel opens so you can change that. Disconnecting the trainer during a ride paus
 ride timer (the panel asks you to click twice). The logger only listens unless you turn on
 **Trainer control** (below).
 
+**Tacx Flow Smart** (and other Tacx smart trainers): shows up as a trainer in the panel
+(name `Tacx Flow …`). Update its firmware once with the Tacx Training app so it speaks FTMS,
+which climb simulation and ERG use, then close that app before connecting here. It is a
+wheel-on trainer, so check the tyre pressure and roller pressure the same way every ride, and
+expect it to top out around 6 % of real grade feel (about 800 W).
+
 ## Simulate climbs (Trainer control)
 
 The **Trainer control** switch under the ride strip lets the logger drive the trainer over

@@ -391,7 +391,7 @@ class TrainerControl(ControlBase):
             raise
         except ControlError as e:
             if e.code == 0x05:
-                self._lost("The trainer refused control. Close Zwift or the ThinkRider app and try again.")
+                self._lost("The trainer refused control. Close Zwift and the trainer’s own app (ThinkRider, Tacx Training) and try again.")
             else:
                 self._fail(f"The trainer answered “{RESULTS.get(e.code, 'error')}”.")
         except asyncio.TimeoutError:
