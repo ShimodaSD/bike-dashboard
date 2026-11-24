@@ -12,6 +12,9 @@
 //   POST /quit    stop the logger
 //   GET  /ride.fit  the finished ride (or the ride so far)
 //
+// Music (music/): Spotify and YouTube Music play in their own embedded players, straight from the
+// services; the logger is not involved.
+//
 // State comes from two external stores read with useSyncExternalStore: the logger's live feed
 // (hooks/feed.js) and settings in localStorage (hooks/stored.js). Everything else is derived while
 // rendering. Effects are kept for real outside systems only: feeding the uPlot charts, document key
@@ -36,6 +39,7 @@ import { useRoute, goLive, type Route } from './hooks/route';
 import { Nav, PageHead } from './nav/nav';
 import { Train } from './train/train';
 import { FtpTestBand, protocolWorkout, startFtpTest } from './ftp/ftp';
+import { MusicButton, MusicPanel } from './music/music-panel';
 import type { DeviceChoice, DeviceKind, DeviceRole, FoundDevice, HrState, HrStatus, LiveValues, RideState,
   RideStatus, Sample, ScanStatus, Status, TrainerState } from './types/feed';
 import type { Workout } from './types/workout';
@@ -109,8 +113,9 @@ interface Actions {
 }
 interface HeaderProps {
   status: Partial<Status>; ride: Partial<RideStatus>; act: Actions; page: Route; onNavigate: () => void;
+  music?: ReactNode;                    // the Music button, first in the ride buttons (the dock on a phone)
 }
-export function Header({ status, ride, act, page, onNavigate }: HeaderProps) {
+export function Header({ status, ride, act, page, onNavigate, music }: HeaderProps) {
   const devicesOpen = page === 'devices';
   const recording = ride.state === 'recording';
   const [col, txt, short] = (status.state && STATUS[status.state]) || ['--text-muted', () => status.state || 'Connecting…', 'Connecting…'];
@@ -126,6 +131,7 @@ export function Header({ status, ride, act, page, onNavigate }: HeaderProps) {
         <span className="sr-only">Open Devices</span>
       </a>
       <div className="controls">
+        {music}
         {recording ? <>
           <button className="primary lap" onClick={act.lap} aria-keyshortcuts="L">Lap <Kbd k="L" /></button>
           <button className={'pause' + (act.paused ? ' on' : '')} onClick={act.pause} aria-keyshortcuts="P"
@@ -276,7 +282,7 @@ export function Settings({ ftp, setFtp, kg, setKg, sex, setSex, onCsv, canCsv, s
           <p className="help">Garmin watch heart rate: turn on <b>Broadcast Heart Rate</b> on the watch.
             Close Zwift and the ThinkRider app first: the trainer and the watch accept one connection at a time.
             <span className="keys"> Keys, on any page: <Kbd k="S" /> start, <Kbd k="L" /> lap, <Kbd k="P" /> pause / resume, <Kbd k="F" /> twice to finish,
-            <Kbd k="−" /> <Kbd k="+" /> grade (Trainer control on).</span></p>
+            <Kbd k="−" /> <Kbd k="+" /> grade (Trainer control on), <Kbd k="M" /> music.</span></p>
         </div>
       </section>
     </section>
@@ -687,6 +693,10 @@ export function App() {
   };
   const [woSound, setWoSound] = useStored('workoutSound', true);
   const [sent, setSent] = useStored<Sent | null>('sent', NOT_SENT);   // which buttons were used for which .fit
+  const [musicOpen, setMusicOpen] = useState(false);
+  const toggleMusic = () => setMusicOpen(o => !o);
+  // closed from inside the panel: focus back on the Music button (the panel is hidden now)
+  const closeMusic = () => { setMusicOpen(false); document.querySelector<HTMLButtonElement>('.music-btn')?.focus(); };
 
   // The page is the URL hash, except on first start: with no trainer remembered yet (or its search
   // turned off) Devices shows in place of Live until a tab is pressed, the hash changes or a ride
@@ -766,6 +776,7 @@ export function App() {
     else if (key === 'f' && mode === 'recording') act.finish();
     else if (key === 'p' && mode === 'recording') act.pause();
     else if (key === 's' && mode !== 'recording') act.start();
+    else if (key === 'm') toggleMusic();
     else controlKey(e, ctl);
   });
   useEffect(() => {
@@ -788,7 +799,8 @@ export function App() {
 
   return (
     <div className="wrap">
-      <Header status={status} ride={ride} act={act} page={page} onNavigate={onNavigate} />
+      <Header status={status} ride={ride} act={act} page={page} onNavigate={onNavigate}
+              music={<MusicButton open={musicOpen} onToggle={toggleMusic} />} />
       <Nav page={page} recording={mode === 'recording'} paused={paused} seconds={hist.length} onNavigate={onNavigate} />
       {!online && <div className="offline" role="alert">The dashboard lost contact with the logger.
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
@@ -825,6 +837,8 @@ export function App() {
         </div>
       </section>
       </div>}
+      {/* outside the pages, so the music keeps playing on every page */}
+      <MusicPanel open={musicOpen} onClose={closeMusic} />
     </div>
   );
 }
