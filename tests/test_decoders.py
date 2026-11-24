@@ -115,3 +115,5 @@ def test_device_kind():
     assert tl.device_kind("Forerunner 165", []) == "hr"
     assert tl.device_kind("HRM-Pro", [tl.u16(0x180D)]) == "hr"
     assert tl.device_kind("Speaker", []) == "other"
+    assert tl.device_kind("Tacx Flow 21345", []) == "trainer"          # Flow Smart by its name
+    assert tl.device_kind(None, [tl.TACX_FEC_SVC.upper()]) == "trainer"  # or its FE-C service

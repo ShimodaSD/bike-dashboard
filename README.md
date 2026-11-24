@@ -11,6 +11,7 @@ scripts/              start.sh: update, install, build if needed, then start the
 logger/               thinkrider_logger.py: Bluetooth, recording, .FIT, web server
                       trainer_control.py: climb simulation / ERG over FTMS (off by default)
                       ftp_test.py: the guided FTP test and its saved results
+                      fec.py: Tacx FE-C over Bluetooth (control for Tacx trainers without FTMS)
                       coach.py: Ask Claude; garmin_rides.py: Garmin Personal API; env.py: .env keys
 dashboard/            dashboard.html (built, served by the logger) and its React + TypeScript source in src/
   src/types/          the logger's SSE payloads (feed.ts) and the workout model (workout.ts)
@@ -77,6 +78,13 @@ the first ThinkRider / FTMS trainer and the first heart-rate broadcast it finds,
 panel opens so you can change that. Disconnecting the trainer during a ride pauses the
 ride timer (the panel asks you to click twice). The logger only listens unless you turn on
 **Trainer control** (below).
+
+**Tacx Flow Smart** (and other Tacx smart trainers): shows up as a trainer in the panel
+(name `Tacx Flow …`). Climb simulation and ERG use FTMS when its firmware has it (update it
+once with the Tacx Training app), and otherwise Tacx's own FE-C over Bluetooth
+(`logger/fec.py`). Close the Tacx app before connecting here. It is a
+wheel-on trainer, so check the tyre pressure and roller pressure the same way every ride, and
+expect it to top out around 6 % of real grade feel (about 800 W).
 
 ## Simulate climbs (Trainer control)
 

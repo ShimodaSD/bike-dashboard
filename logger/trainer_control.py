@@ -19,6 +19,10 @@ Safety:
   * if another app takes over (status 0xFF "control permission lost", or result 0x05)
     control turns itself off and the dashboard says why.
 
+A Tacx trainer whose firmware has no FTMS control point is driven with ANT+ FE-C pages over
+its private Bluetooth service instead (fec.py): page 51 for the grade (with page 50 for wind
+resistance) and page 49 for ERG. Those writes get no answer, so they count as done once written.
+
 DemoControl gives the same behaviour without Bluetooth, for --demo.
 """
 
@@ -27,6 +31,8 @@ import json
 import math
 import os
 import struct
+
+import fec
 
 
 def u16(x: int) -> str:
@@ -44,7 +50,7 @@ OP_START = 0x07
 OP_SIMULATION = 0x11
 OP_RESPONSE = 0x80
 
-NO_CONTROL_POINT = "This trainer has no FTMS control point, so it can't simulate climbs."
+NO_CONTROL_POINT = "This trainer has no FTMS or Tacx FE-C control, so it can't simulate climbs."
 
 RESULTS = {0x01: "success", 0x02: "not supported", 0x03: "invalid value",
            0x04: "failed", 0x05: "control not permitted"}
@@ -255,6 +261,7 @@ class TrainerControl(ControlBase):
         super().__init__(live, sim_file)
         self.client = None
         self.cp = None
+        self.fec = None                          # Tacx FE-C write characteristic, when no FTMS
         self._reply = None                       # Future for the command waiting for its answer
         self._lock = asyncio.Lock()              # one command at a time
         self._dirty = asyncio.Event()            # a new grade / power to send
@@ -265,12 +272,24 @@ class TrainerControl(ControlBase):
     async def attach(self, client):
         """Trainer connected. Find the control point and what the trainer supports.
         Notifications for the control point must already be on (trainer_loop subscribes to all)."""
-        self.client, self.cp, self._have_control = client, None, False
+        self.client, self.cp, self.fec, self._have_control = client, None, None, False
         self.connected = True
         for svc in client.services:
             for ch in svc.characteristics:
+                writable = {"write", "write-without-response"} & set(ch.properties)
                 if ch.uuid.lower() == CONTROL_POINT and "write" in ch.properties:
                     self.cp = ch
+                elif ch.uuid.lower() == fec.FEC_WRITE and writable:
+                    self.fec = ch
+        if self.fec and not self.cp:
+            print("Trainer control: no FTMS control point, using Tacx FE-C over Bluetooth")
+            self.supports = {"sim": True, "erg": True}
+            if self.enabled:
+                self.mode, self.grade = "sim", 0.0
+                self._start_worker()
+            else:
+                self._set(state="off")
+            return
         try:
             self.supports = parse_features(await client.read_gatt_char(FEATURE))
         except Exception:
@@ -294,7 +313,7 @@ class TrainerControl(ControlBase):
         """Trainer gone: control ends with it. The grade starts at 0 % when it comes back."""
         if not self.connected:
             return
-        self.client = self.cp = None
+        self.client = self.cp = self.fec = None
         self.connected = self._have_control = False
         if self._reply and not self._reply.done():
             self._reply.cancel()
@@ -331,7 +350,7 @@ class TrainerControl(ControlBase):
         if not self.connected:
             self._set(state="waiting")
             return
-        if not self.cp:
+        if not self.cp and not self.fec:
             self._set(state="unsupported", enabled=False, msg=NO_CONTROL_POINT)
             return
         self._start_worker()
@@ -356,6 +375,11 @@ class TrainerControl(ControlBase):
 
     async def _send(self, payload: bytes):
         """Write one command and wait for its answer. Returns the result code."""
+        if self.fec and not self.cp:             # FE-C: no answer, written is done
+            async with self._lock:
+                await self.client.write_gatt_char(self.fec, payload,
+                                                  response="write" in self.fec.properties)
+            return 0x01
         async with self._lock:
             loop = asyncio.get_running_loop()
             self._reply = loop.create_future()
@@ -369,6 +393,9 @@ class TrainerControl(ControlBase):
             return result
 
     async def _take_control(self):
+        if self.fec and not self.cp:             # FE-C has no control handshake
+            self._have_control = True
+            return
         res = await self._send(cmd_request_control())
         if res != 0x01:
             raise ControlError(res)
@@ -391,7 +418,7 @@ class TrainerControl(ControlBase):
             raise
         except ControlError as e:
             if e.code == 0x05:
-                self._lost("The trainer refused control. Close Zwift or the ThinkRider app and try again.")
+                self._lost("The trainer refused control. Close Zwift and the trainer’s own app (ThinkRider, Tacx Training) and try again.")
             else:
                 self._fail(f"The trainer answered “{RESULTS.get(e.code, 'error')}”.")
         except asyncio.TimeoutError:
@@ -403,15 +430,27 @@ class TrainerControl(ControlBase):
         if self.mode == "erg":
             if not self.supports.get("erg"):
                 raise ControlError(0x02)
-            res = await self._send(cmd_target_power(self.power_w))
+            res = await self._send(self._power_command())
         else:
-            res = await self._send(self.sim_command())
+            res = await self._sim(self.trainer_grade())
         if res == 0x05:                           # lost control: ask once more
             await self._take_control()
-            res = await self._send(cmd_target_power(self.power_w) if self.mode == "erg"
-                                   else self.sim_command())
+            res = await (self._send(self._power_command()) if self.mode == "erg"
+                         else self._sim(self.trainer_grade()))
         if res != 0x01:
             raise ControlError(res)
+
+    def _power_command(self):
+        if self.fec and not self.cp:
+            return fec.cmd_target_power(self.power_w)
+        return cmd_target_power(self.power_w)
+
+    async def _sim(self, grade):
+        """Send a trainer grade with the climb feel. FE-C needs two pages: wind, then track."""
+        if self.fec and not self.cp:
+            await self._send(fec.cmd_wind(self.sim["cw"]))
+            return await self._send(fec.cmd_track(grade, self.sim["crr"]))
+        return await self._send(cmd_simulation(grade, crr=self.sim["crr"], cw=self.sim["cw"]))
 
     def _fail(self, msg):
         print(f"Trainer control: {msg}")
@@ -424,8 +463,9 @@ class TrainerControl(ControlBase):
     async def _release(self):
         """Flat road, then give control back (Reset)."""
         try:
-            await self._send(self.sim_command(0))
-            await self._send(cmd_reset())
+            await self._sim(0.0)
+            if self.cp:
+                await self._send(cmd_reset())
             print("Trainer control off (0 %, control released)")
         except Exception:
             pass
