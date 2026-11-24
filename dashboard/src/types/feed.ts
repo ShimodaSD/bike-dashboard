@@ -135,7 +135,18 @@ export interface Status {
   ftp?: FtpStatus;
   coach?: CoachStatus;               // logger/coach.py: Ask Claude on the Ride review
   workout?: Workout | null;          // logger/workout_store.py: the loaded workout, the same in every browser
+  media?: MediaStatus;               // logger/media_control.py: the Mac's music
 }
+
+// What plays on the logger's Mac. `now` is only known for the Spotify and Music apps (YouTube Music
+// in a browser plays but reports nothing). keys: whether media keys may be pressed (Accessibility).
+export interface MediaStatus {
+  available: boolean;
+  keys?: boolean | null;
+  volume?: number | null;
+  now?: { app: string; title: string; artist: string; playing: boolean } | null;
+}
+export type MediaAction = 'playpause' | 'next' | 'previous' | 'volup' | 'voldown';
 
 // `init`: the whole ride so far, sent on connect, Start and Clear.
 export interface InitPayload {

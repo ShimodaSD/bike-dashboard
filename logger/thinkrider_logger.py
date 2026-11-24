@@ -84,6 +84,7 @@ import workout_store  # noqa: E402 (logger/)
 from coach import Coach, CoachError  # noqa: E402 (logger/)
 from garmin_rides import GarminError  # noqa: E402 (logger/)
 from env import load_env  # noqa: E402 (logger/)
+from media_control import MediaControl, DemoMedia  # noqa: E402 (logger/)
 
 
 # --------------------------------------------------------------------------
@@ -375,6 +376,7 @@ class Live:
         self.ftp_tests = None          # FtpTests: guided FTP test and its saved results
         self.workout = None            # WorkoutStore: the loaded workout, shared by every browser
         self.coach = None              # Coach: optional Claude evaluation of a ride (coach.py)
+        self.media = None              # MediaControl / DemoMedia: the Mac's music (media_control.py)
 
     # -- ride control (Start / Finish buttons) ------------------------------
     @property
@@ -742,6 +744,10 @@ async def handle_http(reader, writer, live: Live):
                     raise ValueError
             except (KeyError, ValueError, OverflowError):
                 body, code = b"bad request", "400 Bad Request"
+        elif path == "/media" and method == "POST" and live.media:
+            ok = await live.media.press(params.get("do", ""))
+            body, ctype = (b"ok", "text/plain") if ok else (b"not available", "text/plain")
+            code = "200 OK" if ok else "400 Bad Request"
         elif path == "/quit" and method == "POST" and live.quit:
             print("Stop pressed on the dashboard")
             live.quit()
@@ -1642,6 +1648,8 @@ async def main_async(args):
     live.workout = workout_store.WorkoutStore(live, WORKOUT_FILE, demo=args.demo)
     load_env(os.path.join(ROOT, ".env"))       # ANTHROPIC_API_KEY, GARMIN_API_KEY
     live.coach = Coach()
+    live.media = DemoMedia(live) if args.demo else MediaControl(live)
+    live.media.start()
     live.status["coach"] = live.coach.status()
     t0 = time.monotonic()
 
@@ -1701,6 +1709,7 @@ async def main_async(args):
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await live.control.close()        # trainer back to 0 %, control released
+        await live.media.close()
         await devices.close()
         server.close()
         fit = live.finish_ride()          # Ctrl+C mid-ride still saves the .FIT

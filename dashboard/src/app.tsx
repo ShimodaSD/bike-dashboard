@@ -12,8 +12,7 @@
 //   POST /quit    stop the logger
 //   GET  /ride.fit  the finished ride (or the ride so far)
 //
-// Music (music/): Spotify and YouTube Music play in their own embedded players, straight from the
-// services; the logger is not involved.
+//   POST /media?do=playpause|next|previous|volup|voldown   the Mac's music (music/music-panel.tsx)
 //
 // State comes from two external stores read with useSyncExternalStore: the logger's live feed
 // (hooks/feed.js) and settings in localStorage (hooks/stored.js). Everything else is derived while
@@ -837,8 +836,7 @@ export function App() {
         </div>
       </section>
       </div>}
-      {/* outside the pages, so the music keeps playing on every page */}
-      <MusicPanel open={musicOpen} onClose={closeMusic} />
+      {musicOpen && <MusicPanel media={status.media} onClose={closeMusic} />}
     </div>
   );
 }
