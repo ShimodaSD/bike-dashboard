@@ -85,6 +85,7 @@ import workout_store  # noqa: E402 (logger/)
 from coach import Coach, CoachError  # noqa: E402 (logger/)
 from garmin_rides import GarminError  # noqa: E402 (logger/)
 from env import load_env  # noqa: E402 (logger/)
+import fec  # noqa: E402 (logger/)
 
 
 # --------------------------------------------------------------------------
@@ -95,8 +96,8 @@ def u16(x: int) -> str:
 
 
 # Tacx trainers (Flow Smart, Neo, Flux ...) also carry ANT+ FE-C pages over a private
-# Bluetooth service, next to the standard FTMS / Cycling Power ones.
-TACX_FEC_SVC = "6e40fec1-b5a3-f393-e0a9-e50e24dcca9e"
+# Bluetooth service, next to the standard FTMS / Cycling Power ones (see fec.py).
+TACX_FEC_SVC = fec.FEC_SVC
 
 NAMES = {
     u16(0x1826): "Fitness Machine Service (FTMS)",
@@ -132,6 +133,8 @@ NAMES = {
     u16(0x2A28): "Software Revision",
     u16(0x2A00): "Device Name",
     TACX_FEC_SVC: "Tacx FE-C over BLE",
+    fec.FEC_NOTIFY: "Tacx FE-C data",
+    fec.FEC_WRITE: "Tacx FE-C command",
 }
 
 
@@ -327,6 +330,7 @@ DECODERS = {
     u16(0x2A37): decode_hr,
     u16(0x2ADA): decode_ftms_status,
     u16(0x2AD3): decode_training_status,
+    fec.FEC_NOTIFY: fec.decode,
 }
 
 DECODED_FIELDS = [

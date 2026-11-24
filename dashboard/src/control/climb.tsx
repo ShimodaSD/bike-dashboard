@@ -1,4 +1,4 @@
-// Trainer control: simulate a climb (grade) or hold a power (ERG) on the X2Max over FTMS.
+// Trainer control: simulate a climb (grade) or hold a power (ERG) on the trainer (FTMS, or FE-C on a Tacx).
 // Off by default. The logger puts the grade back to 0 % on Finish, when the trainer drops and
 // when it stops, and turns control off if another app (Zwift…) takes the trainer.
 //   POST /control?on=1|0      turn control on / off
