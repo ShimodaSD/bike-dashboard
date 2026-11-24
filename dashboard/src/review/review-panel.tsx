@@ -10,6 +10,7 @@ import { AskClaude } from './ask-claude';
 import { rideSummary } from './summary';
 import { PowerProfile, type KgFrom } from './profile';
 import type { ProfileSex } from '../util/profile';
+import type { HrZone } from '../hr/zones';
 
 const MARK: Record<Tone, string> = { good: '✓', info: '•', warn: '!' };
 const TONE_LABEL: Record<Tone, string> = { good: 'Good', info: 'Note', warn: 'Watch' };
@@ -19,9 +20,10 @@ interface RideReviewProps {
   coach?: CoachStatus;                              // the logger's Ask Claude support (undefined: hidden)
   laps?: number[]; source?: 'live' | 'file'; name?: string;
   kg?: number | null; kgFrom?: KgFrom; sex?: ProfileSex;   // rider weight for W/kg (null: not set)
+  hrZones?: HrZone[] | null;                        // heart-rate zones for the Ask Claude summary (null: not set)
 }
 export const RideReview = memo(function RideReview({ hist, st, ftp, workout, woStart, ftpTest, coach, laps, source = 'live', name,
-                                                       kg = null, kgFrom = 'settings', sex = 'm' }: RideReviewProps) {
+                                                       kg = null, kgFrom = 'settings', sex = 'm', hrZones = null }: RideReviewProps) {
   const r = reviewRide({ hist, st, ftp, workout, woStart, ftpTest });
   const hid = useId();
   return (
@@ -51,7 +53,7 @@ export const RideReview = memo(function RideReview({ hist, st, ftp, workout, woS
       {!r.tooShort && <PowerProfile hist={hist} st={st} kg={kg} kgFrom={kgFrom} sex={sex} />}
       <p className="rv-foot">Worked out on this computer from your FTP of {ftp} W{workout && !ftpTest ? ` and the workout ${workout.name}` : ''}.</p>
       {coach && !r.tooShort && <AskClaude key={`${source}:${name ?? ''}:${hist[0]?.timestamp_utc}:${hist.length}`} coach={coach}
-                                          summary={() => rideSummary({ hist, st, ftp, review: r, laps, source, name, kg, sex })} />}
+                                          summary={() => rideSummary({ hist, st, ftp, review: r, laps, source, name, kg, sex, hrZones })} />}
     </section>
   );
 });

@@ -189,6 +189,12 @@ finish, `Esc` closes Devices / Settings. FTP, weight, workout, CSV export and **
 data** (only between rides) are under **Settings**; FTP,
 weight and chart window are remembered in the browser.
 
+**Settings > Heart rate zones** sets zones in bpm, next to the power zones: 5 zones from max
+heart rate (60 / 70 / 80 / 90 %, as on a Garmin watch) or Joe Friel's 7 cycling zones from
+threshold heart rate (LTHR). Any zone's first bpm can be changed by hand. The Heart rate tile
+shows the zone you are in, and Live, the finished ride and Past rides show time in heart-rate
+zone (rides with heart rate but no power too).
+
 The big numbers update on every reading the trainer sends (a few times a second), within
 a few milliseconds; recording and the charts stay at one sample per second. **Settings >
 Power number** switches between instant power and a 3 s / 5 s average. **Live updates**

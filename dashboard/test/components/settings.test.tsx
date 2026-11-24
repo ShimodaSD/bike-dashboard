@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Settings } from '../../src/app';
 import { Train } from '../../src/train/train';
 import type { Workout } from '../../src/types/workout';
+import { HR_DEFAULT, type HrSettings } from '../../src/hr/zones';
 
 const posted = () => vi.mocked(fetch).mock.calls.map(c => c[0]);
 
@@ -15,11 +16,12 @@ function Harness({ recording = false, canCsv = true, onCsv = () => {} }) {
   const [smooth, setSmooth] = useState(0), [liveRate, setLiveRate] = useState<'auto' | 'fast' | 'saver'>('auto');
   const [wo, setWo] = useState<Workout | null>(null), [sound, setSound] = useState(true);
   const [sex, setSex] = useState<'m' | 'f'>('m');
+  const [hr, setHr] = useState<HrSettings>(HR_DEFAULT);
   return <>
     <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} sex={sex} setSex={setSex} smooth={smooth} setSmooth={setSmooth}
-              liveRate={liveRate} setLiveRate={setLiveRate} onCsv={onCsv} canCsv={canCsv} recording={recording} />
+              liveRate={liveRate} setLiveRate={setLiveRate} onCsv={onCsv} canCsv={canCsv} recording={recording} hr={hr} setHr={setHr} />
     <Train workout={{ wo, setWo, sound, setSound }} />
-    <output data-testid="saved">{JSON.stringify({ ftp, kg, smooth, liveRate, wo: wo?.name ?? null, steps: wo?.segs.length, sound })}</output>
+    <output data-testid="saved">{JSON.stringify({ ftp, kg, smooth, liveRate, wo: wo?.name ?? null, steps: wo?.segs.length, sound, hr })}</output>
   </>;
 }
 const saved = () => JSON.parse(screen.getByTestId('saved').textContent!);
@@ -159,5 +161,44 @@ describe('this ride', () => {
     act(() => vi.advanceTimersByTime(600));
     await user.click(screen.getByRole('button', { name: 'Click again to stop' }));
     expect(posted()).toEqual(['/clear', '/quit']);
+  });
+});
+
+describe('heart rate zones', () => {
+  it('works out 5 zones from max HR, then keeps a zone edge set by hand', async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<Harness />);
+    expect(screen.getByText(/Set your max heart rate to see the zones/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Max heart rate'), '190{Enter}');
+    expect(saved().hr).toEqual({ method: 'max', max: 190, lthr: null, lows: null });
+    expect(screen.getByText('133–151 bpm')).toBeInTheDocument();          // Z3 70–80 %
+    const z3 = screen.getByLabelText('Z3 starts at (bpm)');
+    await user.clear(z3);
+    await user.type(z3, '135{Enter}');
+    expect(saved().hr.lows).toEqual([114, 135, 152, 171]);
+    expect(screen.getByText('114–134 bpm')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Reset to calculated' }));
+    expect(saved().hr.lows).toBeNull();
+  });
+
+  it('refuses an edge that would overlap the next zone', async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<Harness />);
+    await user.type(screen.getByLabelText('Max heart rate'), '190{Enter}');
+    const z2 = screen.getByLabelText('Z2 starts at (bpm)');
+    await user.clear(z2);
+    await user.type(z2, '140{Enter}');
+    expect(saved().hr.lows).toBeNull();
+    expect(screen.getByRole('alert')).toHaveTextContent('1–132');
+  });
+
+  it('switches to 7 LTHR zones', async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<Harness />);
+    await user.selectOptions(screen.getByLabelText('Zones from'), 'lthr');
+    await user.type(screen.getByLabelText('Threshold heart rate (LTHR)'), '170{Enter}');
+    expect(screen.getAllByRole('listitem')).toHaveLength(7);
+    expect(screen.getByText('Z5a')).toBeInTheDocument();
+    expect(screen.getByText('170–174 bpm')).toBeInTheDocument();          // Z5a 100–102 %
   });
 });

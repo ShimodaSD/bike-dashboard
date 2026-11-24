@@ -3,14 +3,16 @@
 // (import/ridefile.ts); nothing is uploaded or saved, and the live ride is not touched.
 import { useState, type ChangeEvent } from 'react';
 import { RideReview } from '../review/review-panel';
-import { TimeInZone } from '../review/zones';
+import { TimeInHrZone, TimeInZone } from '../review/zones';
+import { timeInHrZones, type HrZone } from '../hr/zones';
 import { bestPower, fmtT, kcalOf, stats } from '../util/ride';
 import { readRideFile, type RideFile } from './ridefile';
 import type { CoachStatus } from '../types/coach';
 import { fmtWkg, wkgOf, type ProfileSex } from '../util/profile';
 
-// The rider settings a review needs: FTP, weight (null: not set) and the power profile table.
-export interface Rider { ftp: number; kg: number | null; sex: ProfileSex }
+// The rider settings a review needs: FTP, weight (null: not set), the power profile table and
+// the heart-rate zones (null: max HR / LTHR not set).
+export interface Rider { ftp: number; kg: number | null; sex: ProfileSex; hrZones?: HrZone[] | null }
 
 export const RIDE_FILE_TYPES = '.fit,.tcx,.gpx,.csv';
 
@@ -49,11 +51,13 @@ export function ReviewFile({ rider, coach }: { rider: Rider; coach?: CoachStatus
 }
 
 export function FileResult({ ride, rider, coach }: { ride: RideFile; rider: Rider; coach?: CoachStatus }) {
-  const { hist } = ride, { ftp, sex } = rider;
+  const { hist } = ride, { ftp, sex, hrZones = null } = rider;
   // the weight saved in the file keeps a past ride's W/kg as it was; else today's weight
   const kg = ride.kg ?? rider.kg, kgFrom = ride.kg != null ? 'file' as const : 'settings' as const;
   const st = stats(hist, ftp, null);
   const b20 = bestPower(hist, 1200);
+  const hrTiz = hrZones && st.avgHr ? timeInHrZones(hist, hrZones) : null;
+  const hrPanel = hrZones && hrTiz ? <TimeInHrZone zones={hrZones} tiz={hrTiz} /> : null;
   return <>
     <div className="rf-head">
       <b>{ride.name}</b>
@@ -61,7 +65,8 @@ export function FileResult({ ride, rider, coach }: { ride: RideFile; rider: Ride
     </div>
     {!ride.hasPower ? <p className="note err" role="alert">This file has no power data, so there is nothing to evaluate:
       the review works from power and your FTP.{ride.hasHr && st.avgHr ? ` Average heart rate ${Math.round(st.avgHr)} bpm, max ${st.maxHr}.` : ''}</p>
-    : <>
+    : null}
+    {!ride.hasPower ? hrPanel : <>
       <dl className="rf-nums">
         <div><dt>Avg power</dt><dd>{r0(st.avgP)}<small> W</small></dd></div>
         <div><dt>Normalized</dt><dd>{r0(st.np)}<small> W</small></dd></div>
@@ -72,8 +77,9 @@ export function FileResult({ ride, rider, coach }: { ride: RideFile; rider: Ride
         <div><dt>Calories</dt><dd>{Math.round(kcalOf(st.kj))}<small> kcal</small></dd></div>
       </dl>
       <RideReview hist={hist} st={st} ftp={ftp} workout={null} woStart={0} ftpTest={false} coach={coach} source="file" name={ride.name}
-                  kg={kg} kgFrom={kgFrom} sex={sex} />
+                  kg={kg} kgFrom={kgFrom} sex={sex} hrZones={hrZones} />
       <TimeInZone st={st} ftp={ftp} />
+      {hrPanel}
     </>}
   </>;
 }

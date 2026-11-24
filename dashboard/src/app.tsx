@@ -32,7 +32,9 @@ import { useArmed, useEvent } from './hooks/hooks';
 import { ZONES, nz, fmtT, zoneOf, stats, bestPower, tssOf, fmtTss, avg3, livePower, kcalOf, type RideStats } from './util/ride';
 import { Charts } from './charts/charts';
 import { RideReview } from './review/review-panel';
-import { TimeInZone } from './review/zones';
+import { TimeInHrZone, TimeInZone } from './review/zones';
+import { HR_DEFAULT, hrZoneColor, hrZoneOf, hrZones, timeInHrZones, type HrSettings, type HrZone } from './hr/zones';
+import { HrZonesSettings } from './hr/hr-settings';
 import { PastRides } from './past/past-rides';
 import { LEVELS, PROFILE_SOURCE, fmtWkg, levelOf, wkgOf, type ProfileSex } from './util/profile';
 import { useRoute, goLive, type Route } from './hooks/route';
@@ -212,11 +214,12 @@ interface SettingsProps {
   sex: ProfileSex; setSex: (v: ProfileSex) => void;
   onCsv: () => void; canCsv: boolean; smooth: number; setSmooth: (v: number) => void;
   liveRate: LiveRate; setLiveRate: (v: LiveRate) => void; recording: boolean;
+  hr: HrSettings; setHr: (v: HrSettings) => void;
 }
 // Grouped by what the rider is changing: about you, how the live numbers look, the data on disk.
 // The workout and FTP test are on the Training page (train/train.tsx); Climb feel is in the
 // Trainer control band on Live (control/climb-feel.tsx).
-export function Settings({ ftp, setFtp, kg, setKg, sex, setSex, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording }: SettingsProps) {
+export function Settings({ ftp, setFtp, kg, setKg, sex, setSex, onCsv, canCsv, smooth, setSmooth, liveRate, setLiveRate, recording, hr, setHr }: SettingsProps) {
   return (
     <section className="page" aria-labelledby="settings-h">
       <PageHead id="settings-h" title="Settings" />
@@ -235,6 +238,7 @@ export function Settings({ ftp, setFtp, kg, setKg, sex, setSex, onCsv, canCsv, s
           <p className="help">Which of Coggan&apos;s tables rates your W/kg, from {LEVELS[LEVELS.length - 1]} to {LEVELS[0]}.</p>
         </div>
       </section>
+      <HrZonesSettings hr={hr} setHr={setHr} />
       <section className="settings" aria-labelledby="set-live">
         <h3 id="set-live">Live numbers</h3>
         <div className="field">
@@ -471,8 +475,9 @@ interface HeroProps {
   hist: Sample[]; laps: number[]; st: RideStats; ftp: number; preview: LiveValues | null; mode: Mode;
   now: LiveNow | null; recent: RecentPower[]; smooth: number; paused: boolean; targets: TileTargets;
   lapFlash?: number;                                // a lap just started: "Lap N started" in the Ride time tile
+  hrZones?: HrZone[] | null;                        // heart-rate zones (null: not set in Settings)
 }
-function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth, paused, targets, lapFlash = 0 }: HeroProps) {
+function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth, paused, targets, lapFlash = 0, hrZones: hz = null }: HeroProps) {
   const done = mode === 'finished' && hist.length > 0;
   const fresh = now && Date.now() - now.at < FRESH_MS;
   const live: LiveValues[] = fresh ? [now] : mode === 'recording' && !paused ? hist : preview ? [preview] : [];
@@ -481,6 +486,9 @@ function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth, paused,
   const zi = p != null && p > 0 ? zoneOf(p, ftp) : -1;
   const z = ZONES[zi];
   const zoneTxt = p != null && p > 0 ? <><b className="zn">{z.n}</b><span className="zrest"><b>{z.name}</b> · {Math.round((p / ftp) * 100)}% FTP</span></> : null;
+  // heart-rate zone: of the reading now, or of the ride's average once finished
+  const hrNow = done ? st.avgHr : last?.heart_rate_bpm ?? null;
+  const hzi = hz && hrNow ? hrZoneOf(hrNow, hz) : -1;
   // current lap at a glance: number, time and average power so far
   const lapStart = laps[laps.length - 1] || 0, lapRows = hist.slice(lapStart);
   const lapAvg = lapRows.length ? lapRows.reduce((t, s) => t + (s.power_w || 0), 0) / lapRows.length : null;
@@ -516,9 +524,22 @@ function Hero({ hist, laps, st, ftp, preview, mode, now, recent, smooth, paused,
             value={done ? r0(st.avgHr) : last ? r0(last.heart_rate_bpm) : '–'}
             sub={done ? (st.maxHr ? `max ${st.maxHr}` : 'No HR data')
                  : !last ? '' : mode === 'recording' && st.avgHr ? `avg ${Math.round(st.avgHr)} · max ${st.maxHr}`
-                 : nz(last.heart_rate_bpm) ? '' : 'No HR data'} />
+                 : nz(last.heart_rate_bpm) ? '' : 'No HR data'}>
+        {hz && <HrZoneNow zones={hz} i={hzi} />}
+      </Tile>
     </section>
   );
+}
+
+// The heart-rate zone under the Heart rate tile: its name and a bar like the power tile's.
+function HrZoneNow({ zones, i }: { zones: HrZone[]; i: number }) {
+  const z = zones[i];
+  return <>
+    <div className="hrzone-now" aria-live="off">{z ? <><b style={{ color: hrZoneColor(i, zones) }}>{z.n}</b> {z.name}</> : ' '}</div>
+    <div className="zonebar hr" aria-hidden="true">
+      {zones.map((zz, k) => <span key={zz.n} className={k === i ? 'on' : ''} style={{ background: hrZoneColor(k, zones) }} />)}
+    </div>
+  </>;
 }
 
 interface StatsProps {
@@ -678,6 +699,8 @@ export function App() {
   const [ftp, setFtp] = useStored('ftp', 200);    // FTP and weight stay in this browser
   const [kg, setKgStored] = useStored<number | null>('kg', null);
   const [sex, setSex] = useStored<ProfileSex>('profileSex', 'm');
+  const [hrSet, setHrSet] = useStored<HrSettings>('hrZones', HR_DEFAULT);
+  const hrZ = useMemo(() => hrZones(hrSet), [hrSet]);
   // the weight goes with the ride: sent at Start, and again if it is changed mid-ride
   const setKg = (v: number | null) => { setKgStored(v); if (mode === 'recording') post(`/ride/weight?kg=${v ?? ''}`); };
   const rideKg = mode !== 'ready' && ride.kg != null ? ride.kg : kg;   // a finished ride keeps its own
@@ -722,6 +745,7 @@ export function App() {
   const lapFlash = mode === 'recording' && laps.length > 1 && hist.length - lapStart < LAP_FLASH_S ? laps.length : 0;
 
   const st = useMemo(() => stats(hist, ftp, null), [version, ftp]); // eslint-disable-line react-hooks/exhaustive-deps -- hist grows in place
+  const hrTiz = useMemo(() => (hrZ && st.avgHr ? timeInHrZones(hist, hrZ) : null), [version, hrZ, st.avgHr]); // eslint-disable-line react-hooks/exhaustive-deps -- hist grows in place
 
   // the finished ride is "unsaved" until its .FIT was downloaded from here
   const unsaved = mode === 'finished' && ride.fit && !(sent && sent.fit === ride.fit && sent.to.length);
@@ -806,12 +830,12 @@ export function App() {
         If it was stopped, start it again with <b>Start X2Max</b>. Retrying…</div>}
       {page === 'train' ? <Train workout={{ wo, setWo, sound: woSound, setSound: setWoSound }}
                                  ftpTest={{ ftpStatus, ftp, setFtp, recording: mode === 'recording', startArmed: testArmed, onStart: startTest }} />
-      : page === 'rides' ? <PastRides rider={{ ftp, kg, sex }} coach={online ? status.coach : undefined} />
+      : page === 'rides' ? <PastRides rider={{ ftp, kg, sex, hrZones: hrZ }} coach={online ? status.coach : undefined} />
       : page === 'devices' ? <section className="page" aria-labelledby="devices-h">
           <PageHead id="devices-h" title="Devices">The trainer and a heart-rate source. Close Zwift and the ThinkRider app first: each device takes one connection at a time.</PageHead>
           <Devices status={status} recording={mode === 'recording'} />
         </section>
-      : page === 'settings' ? <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} sex={sex} setSex={setSex} smooth={smooth} setSmooth={setSmooth}
+      : page === 'settings' ? <Settings ftp={ftp} setFtp={setFtp} kg={kg} setKg={setKg} sex={sex} setSex={setSex} hr={hrSet} setHr={setHrSet} smooth={smooth} setSmooth={setSmooth}
                                         liveRate={liveRate} setLiveRate={setLiveRate} onCsv={() => exportCsv(hist)} canCsv={hist.length > 0}
                                         recording={mode === 'recording'} />
       : <div className="live">
@@ -824,15 +848,16 @@ export function App() {
                             onRemove={testing ? undefined : () => setWo(null)} paused={paused} {...reading} /> : null}
       {mode === 'finished' && hist.length > 0 && <RideReview hist={hist} st={st} ftp={ftp} workout={wo} woStart={0} ftpTest={!!ftpRun}
                                                                    coach={online ? status.coach : undefined} laps={laps} source="live"
-                                                                   kg={rideKg} kgFrom={ride.kg != null ? 'ride' : 'settings'} sex={sex} />}
+                                                                   kg={rideKg} kgFrom={ride.kg != null ? 'ride' : 'settings'} sex={sex} hrZones={hrZ} />}
       <Hero hist={hist} laps={laps} st={st} ftp={ftp} preview={mode === 'recording' && !paused ? null : preview} mode={mode}
-            now={now} recent={recent} smooth={powerSmooth} paused={paused} targets={targets} lapFlash={lapFlash} />
+            now={now} recent={recent} smooth={powerSmooth} paused={paused} targets={targets} lapFlash={lapFlash} hrZones={hrZ} />
       <Stats hist={hist} st={st} ftp={ftp} kg={rideKg} more={more} setMore={setMore} mode={mode} />
       <section className="main">
         <Charts hist={hist} laps={laps} ftp={ftp} win={win} setWin={setWin} version={version}
                 workout={testing || (ftpRun && mode === 'finished') ? testWo : wo} />
         <div className="side">
           <TimeInZone st={st} ftp={ftp} />
+          {hrZ && hrTiz && <TimeInHrZone zones={hrZ} tiz={hrTiz} />}
           <Laps hist={hist} laps={laps} ftp={ftp} recording={mode === 'recording'} version={version} />
         </div>
       </section>

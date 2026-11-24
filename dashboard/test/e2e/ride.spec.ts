@@ -183,3 +183,15 @@ test('other websites cannot drive the logger', async ({ request }) => {
   const res = await request.post('/start', { headers: { Origin: 'https://evil.example' } });
   expect(res.status()).toBe(403);
 });
+
+test('heart-rate zones from Settings show on the Heart rate tile and in time in zone', async ({ page }) => {
+  await openPage(page, 'Settings');
+  await page.getByLabel('Max heart rate').fill('190');
+  await page.getByLabel('Max heart rate').press('Enter');
+  await expect(page.getByText('133–151 bpm')).toBeVisible();
+  await openPage(page, 'Live');
+  await expect(page.locator('.hero .hrzone-now')).toHaveText(/^Z\d /);
+  await page.getByRole('button', { name: /^Start(?! FTP)/ }).click();
+  await expect(page.getByRole('heading', { name: 'Time in heart-rate zone' })).toBeVisible({ timeout: 8000 });
+  await finish(page);
+});

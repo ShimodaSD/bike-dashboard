@@ -4,6 +4,7 @@ import type { Sample } from '../types/feed';
 import { ZONES, bestPower, stats, type RideStats } from '../util/ride';
 import type { Review } from './review';
 import { levelOf, peaksOf, wkgOf, type ProfileSex } from '../util/profile';
+import { hrRange, timeInHrZones, type HrZone } from '../hr/zones';
 
 const r = (v: number | null | undefined, nd = 0) => (v == null || !Number.isFinite(v) ? null : +v.toFixed(nd));
 const avgOf = (a: number[]) => (a.length ? a.reduce((t, x) => t + x, 0) / a.length : null);
@@ -22,10 +23,11 @@ function profile(hist: Sample[]) {
 
 export interface SummaryInput {
   hist: Sample[]; st: RideStats; ftp: number; review: Review; laps?: number[]; source: 'live' | 'file'; name?: string;
-  kg?: number | null; sex?: ProfileSex;
+  kg?: number | null; sex?: ProfileSex; hrZones?: HrZone[] | null;
 }
 
-export function rideSummary({ hist, st, ftp, review, laps = [0], source, kg = null, sex = 'm' }: SummaryInput) {
+export function rideSummary({ hist, st, ftp, review, laps = [0], source, kg = null, sex = 'm', hrZones = null }: SummaryInput) {
+  const hrTiz = hrZones && st.avgHr ? timeInHrZones(hist, hrZones) : null;
   const ftpWkg = wkgOf(ftp, kg);
   const half = Math.floor(hist.length / 2);
   const h1 = stats(hist.slice(0, half), ftp, null), h2 = stats(hist.slice(half), ftp, half > 0 ? hist[half - 1] : null);
@@ -53,6 +55,7 @@ export function rideSummary({ hist, st, ftp, review, laps = [0], source, kg = nu
       avg_hr: r(st.avgHr), max_hr: st.maxHr, avg_rpm: r(st.avgCad), avg_kmh: r(st.avgSpd, 1),
       distance_km: r(st.dist / 1000, 1), kj: r(st.kj),
       zones_min: Object.fromEntries(ZONES.map((z, i) => [`${z.n} ${z.name}`, r(st.tiz[i] / 60, 1)])),
+      hr_zones_min: hrZones && hrTiz ? Object.fromEntries(hrZones.map((z, i) => [`${z.n} ${z.name} (${hrRange(z)} bpm)`, r(hrTiz[i] / 60, 1)])) : undefined,
       halves: [{ avg_w: r(h1.avgP), avg_hr: r(h1.avgHr) }, { avg_w: r(h2.avgP), avg_hr: r(h2.avgHr) }],
       hr_drift_pct: r(review.decoupling, 1),
       laps: lapRows.length > 1 ? lapRows : undefined,
