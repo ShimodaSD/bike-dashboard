@@ -157,6 +157,19 @@ Garmin Connect**: it downloads the `.fit` and opens the site's upload page in a 
 where you drag the file in (Strava: [strava.com/upload/select](https://www.strava.com/upload/select),
 Garmin: Import Data). There is no automatic upload: Strava's API needs a paid subscription.
 
+## Music
+
+**Music** (or the M key) on the dashboard opens a small remote: play / pause, previous, next and
+volume for whatever plays on the Mac running the logger: YouTube Music in a browser tab, Spotify
+or Music. It works from a phone too. The logger presses the Mac's media keys
+(`logger/media_control.py`), so there is no account or API key. The Spotify and Music apps also
+show the song that is playing.
+
+- The first time Spotify or Music is controlled, macOS asks to let **Terminal** control it: allow it.
+- For YouTube Music in a browser, allow **Terminal** under System Settings › Privacy & Security ›
+  Accessibility (it lets the logger press the media keys), then restart the logger. The panel
+  says when this is missing.
+
 ## Dashboard
 
 `dashboard/dashboard.html` is served by the script at http://localhost:8000 (or the next free port). It shows power
