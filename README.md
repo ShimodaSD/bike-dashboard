@@ -61,6 +61,10 @@ A Terminal window shows the log; leave it open. To stop, use **Settings > Stop l
 the window or press Ctrl+C (a ride in progress is saved either way). If Finder says a
 `.command` file can't be opened, right-click it > Open once.
 
+While the logger runs, the Mac doesn't go to sleep on its own (it runs `caffeinate`; closing the
+lid still sleeps it; `--allow-sleep` turns this off), and while the dashboard page is open the
+screen stays on too. The phone's screen can't be kept on this way over plain `http://`.
+
 Any other option goes straight to the logger (`scripts/start.sh --help` lists them all), and
 `uv run logger/thinkrider_logger.py` still works on its own if you'd rather skip the checks.
 

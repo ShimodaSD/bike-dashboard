@@ -85,6 +85,7 @@ from coach import Coach, CoachError  # noqa: E402 (logger/)
 from garmin_rides import GarminError  # noqa: E402 (logger/)
 from env import load_env  # noqa: E402 (logger/)
 from media_control import MediaControl, DemoMedia  # noqa: E402 (logger/)
+from keep_awake import KeepAwake  # noqa: E402 (logger/)
 
 
 # --------------------------------------------------------------------------
@@ -1652,6 +1653,9 @@ async def main_async(args):
     live.media.start()
     live.status["coach"] = live.coach.status()
     t0 = time.monotonic()
+    awake = KeepAwake()
+    if not args.allow_sleep and awake.start():
+        print("Keeping this Mac awake while the logger runs (--allow-sleep to turn off).")
 
     # Stop button on the dashboard, closing the launcher's Terminal window (SIGHUP) or
     # a kill (SIGTERM) all end like Ctrl+C: a ride in progress is saved.
@@ -1710,6 +1714,7 @@ async def main_async(args):
         await asyncio.gather(*tasks, return_exceptions=True)
         await live.control.close()        # trainer back to 0 %, control released
         await live.media.close()
+        awake.close()
         await devices.close()
         server.close()
         fit = live.finish_ride()          # Ctrl+C mid-ride still saves the .FIT
@@ -1747,6 +1752,8 @@ def main():
     p.add_argument("--port", type=int, default=None,
                    help=f"dashboard port (default: {DEFAULT_PORT}, or the next free one if "
                    "something else, e.g. a Docker container, already uses it)")
+    p.add_argument("--allow-sleep", action="store_true",
+                   help="let the Mac sleep while the logger runs (by default it stays awake on macOS)")
     p.add_argument("--no-browser", action="store_true", help="don't open the dashboard automatically")
     p.add_argument("--out", default=os.path.join(ROOT, "rides", datetime.now().strftime("x2max_%Y%m%d_%H%M%S")),
                    help="output folder")
