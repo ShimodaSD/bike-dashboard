@@ -35,6 +35,7 @@ import { TimeInZone } from './review/zones';
 import { PastRides } from './past/past-rides';
 import { LEVELS, PROFILE_SOURCE, fmtWkg, levelOf, wkgOf, type ProfileSex } from './util/profile';
 import { useRoute, goLive, type Route } from './hooks/route';
+import { useKeepScreenOn } from './hooks/wake-lock';
 import { Nav, PageHead } from './nav/nav';
 import { Train } from './train/train';
 import { FtpTestBand, protocolWorkout, startFtpTest } from './ftp/ftp';
@@ -667,6 +668,7 @@ const LAP_FLASH_S = 3;                               // "Lap N started" for the 
 
 export function App() {
   const route = useRoute();
+  useKeepScreenOn();                                 // the Mac's screen stays on while this page is open
   const [smooth, setSmooth] = useStored('powerSmooth', 0);
   const [liveRate, setLiveRate] = useStored<LiveRate>('liveRate', 'auto');
   const rate = liveRate === 'saver' || (liveRate === 'auto' && TOUCH) ? 2 : 0;
